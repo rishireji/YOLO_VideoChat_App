@@ -8,8 +8,16 @@ export interface UserSession {
   token: string;
   region: Region;
   isModerated: boolean;
-  expiresAt: number; // Timestamp for session expiry
+  expiresAt: number;
   preferredLanguage: string;
+}
+
+export interface SignalingMessage {
+  type: 'offer' | 'answer' | 'candidate' | 'match_found';
+  senderId: string;
+  targetId?: string;
+  sdp?: RTCSessionDescriptionInit;
+  candidate?: RTCIceCandidateInit;
 }
 
 export interface ChatMessage {

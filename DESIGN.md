@@ -1,58 +1,34 @@
 
-# NexusVibe: System Architecture & Security Design
+# YOLO: Production WebRTC Architecture
 
-NexusVibe is a production-grade anonymous video chat platform designed for massive scale and extreme privacy.
+## 1. The Signaling Phase (WSS)
+WebRTC cannot find peers on its own. Production signaling requires:
+- **WebSocket (wss://)**: Encrypted, bidirectional communication.
+- **Protocol**: JSON messages for `offer`, `answer`, and `ice-candidate`.
+- **Identity**: Map Socket IDs to Session IDs in Redis.
 
-## 1. High-Level Architecture
+## 2. ICE Traversal (NAT Bypass)
+Standard home routers use NAT. 
+- **STUN (80% of cases)**: Asks a server "What is my public IP?". 
+- **TURN (20% of cases)**: When STUN fails (Symmetric NAT), the TURN server acts as a proxy. 
+- **Recommendation**: Deploy 3x global TURN nodes (US, EU, ASIA) via CoTurn on AWS/GCP.
 
-```text
-[ Clients (Web/Mobile) ]
-      |
-      | (HTTPS/WSS - Load Balanced)
-      v
-[ API Gateway / Load Balancer ]
-      |
-      |-------------------------------------------------------|
-      |                                                       |
-[ Signaling Service (Node.js/Socket.io Cluster) ]   [ Auth & Matchmaking (FastAPI/Go) ]
-      |                                                       |
-      | (Redis Pub/Sub)                                       | (Redis Queues)
-      |-------------------------------------------------------|
-      |                                                       |
-[ STUN/TURN Infrastructure (Coturn/Global Relay) ]    [ Compliance & Logging (Ephemeral) ]
-```
+## 3. Production Connectivity Checklist
 
-## 2. Tech Stack Justification
+### Network
+- [ ] **HTTPS Only**: `getUserMedia` and WebRTC are disabled on insecure origins.
+- [ ] **TURN Servers**: Configured with short-lived credentials (TTL).
+- [ ] **UDP Ports**: Ensure ports 49152–65535 are open on your TURN server.
 
-- **Frontend**: React + TypeScript + Tailwind CSS (SPA approach).
-- **Backend Signaling**: Node.js + Socket.io.
-- **Matchmaking Engine**: Redis Sorted Sets.
-- **Communication**: WebRTC (p2p by default, relay via TURN if needed).
+### Signaling
+- [ ] **Candidate Trickling**: Send candidates as they are generated; do not wait for the SDP.
+- [ ] **Perfect Negotiation**: Implement a "polite/impolite" peer logic to handle simultaneous offers (Glare).
 
-## 3. Privacy vs. Moderation Trade-off
+### Privacy & Security
+- [ ] **IP Leakage**: Use `iceTransportPolicy: 'relay'` if you want to completely hide user IP addresses from peers (at the cost of server bandwidth).
+- [ ] **Encryption**: DTLS/SRTP is handled automatically by the browser but requires valid certs.
 
-The platform implements an **AI Safety Shield** to prevent the spread of illegal or vulgar content. 
-
-### Data Flow for Moderation:
-- **Local Capture**: Frames are sampled from the user's local video stream every 10s.
-- **Anonymized Inference**: Frames are sent to the Gemini API for analysis. **No user metadata, session IDs, or IP addresses are attached to these frames.**
-- **Transient Analysis**: The AI service processes the frame in-memory to check for safety violations. 
-- **Zero Retention**: Frames are not stored or used for model training in a production enterprise environment (standard API data privacy).
-
-## 4. Security Implementation
-
-- **IP Privacy**: Use `iceTransportPolicy: 'relay'` in production to force all traffic through TURN servers.
-- **Bot Protection**: Cloudflare Turnstile integration.
-- **E2EE**: WebRTC media is encrypted by DTLS.
-- **Abuse Control**: Gemini API Vision hooks. If the confidence of NSFW content is high, the session is terminated locally.
-
-## 5. Scalability Strategy
-
-- **Horizontal Scaling**: All signaling servers are stateless.
-- **Global TURN**: Deploy TURN servers globally to minimize latency.
-- **Cost Considerations**: TURN bandwidth is expensive. AI inference costs are optimized by sampling (1 frame per 10s).
-
-## 6. Future Enhancements
-
-- **Interests Tagging**: Match users based on shared hashtags.
-- **AR Filters**: Privacy filters (blur background) using TensorFlow.js on the client.
+## 4. Debugging Tooling
+- **Chrome**: `chrome://webrtc-internals`
+- **Firefox**: `about:webrtc`
+- **Ice Test**: Use [trickle-ice](https://webrtc.github.io/samples/src/content/peerconnection/trickle-ice/) to verify your TURN credentials work.
