@@ -54,7 +54,6 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ onExit }) => {
     
     setMessages(prev => [...prev, msg]);
 
-    // Async Translation
     const targetLang = session?.preferredLanguage || 'English';
     const translationResult = await translateText(text, targetLang);
 
@@ -84,18 +83,17 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ onExit }) => {
     toggleVideo 
   } = useWebRTC(session?.region || 'global', handleReactionReceived, handleMessageReceived);
 
-  // Start Automated AI Moderation Engine
   useModeration(localStream);
 
   useEffect(() => {
     switch (status) {
       case 'matching':
       case 'connecting':
+      case 'signaling_offline':
         setAppState(AppState.MATCHMAKING);
         break;
       case 'connected':
         setAppState(AppState.CONNECTED);
-        setMessages([]); 
         setMessages([{
           id: 'system-' + Date.now(),
           senderId: 'system',
@@ -106,18 +104,11 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ onExit }) => {
       case 'disconnected':
         setAppState(AppState.DISCONNECTED);
         break;
-      case 'error':
-        break;
     }
   }, [status]);
 
   const handleSendMessage = (text: string) => {
-    const msg: ChatMessage = {
-      id: Date.now().toString(),
-      senderId: 'me',
-      text,
-      timestamp: Date.now(),
-    };
+    const msg: ChatMessage = { id: Date.now().toString(), senderId: 'me', text, timestamp: Date.now() };
     setMessages(prev => [...prev, msg]);
     sendMessage(text);
   };
@@ -128,51 +119,26 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ onExit }) => {
 
   const handleSendReaction = (type: ReactionType) => {
     if (appState !== AppState.CONNECTED) return;
-    
     sendReaction(type);
-    
     const id = Math.random().toString(36).substring(7);
     const x = 10 + Math.random() * 80;
     const rotation = -30 + Math.random() * 60;
     setActiveReactions(prev => [...prev, { id, type, x, rotation, isLocal: true }]);
-    
-    setTimeout(() => {
-      setActiveReactions(prev => prev.filter(r => r.id !== id));
-    }, 2500);
-  };
-
-  const handleReportSubmit = (reasonId: string) => {
-    console.log('[YOLO] Compliance Report:', reasonId);
-    setIsReportModalOpen(false);
-    skip(); 
+    setTimeout(() => setActiveReactions(prev => prev.filter(r => r.id !== id)), 2500);
   };
 
   return (
-    <div className="flex flex-col lg:flex-row h-screen w-full bg-black overflow-hidden relative animate-in fade-in duration-700">
-      <ReportModal 
-        isOpen={isReportModalOpen} 
-        onClose={() => setIsReportModalOpen(false)} 
-        onSubmit={handleReportSubmit} 
-      />
+    <div className="flex flex-col lg:flex-row h-screen w-full bg-black overflow-hidden relative">
+      <ReportModal isOpen={isReportModalOpen} onClose={() => setIsReportModalOpen(false)} onSubmit={() => skip()} />
 
       <div className="flex-1 flex flex-col relative h-[50vh] lg:h-full">
-        {/* Safety Indicator Overlay */}
-        <div className="absolute top-6 right-6 z-50 pointer-events-none group">
-          <div className="px-4 py-2 bg-black/40 backdrop-blur-xl border border-white/5 rounded-2xl flex items-center gap-3 shadow-2xl transition-all group-hover:bg-red-900/20 group-hover:border-red-500/30">
-            <div className="relative">
-              <div className="w-2.5 h-2.5 rounded-full bg-red-500 animate-ping absolute inset-0"></div>
-              <div className="w-2.5 h-2.5 rounded-full bg-red-500 relative"></div>
-            </div>
-            <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest transition-colors group-hover:text-red-400">AI Safety Shield Active</span>
-          </div>
-        </div>
-
         <div className="flex-1 flex flex-col gap-3 p-3 h-full">
           <div className="flex-1 relative rounded-[32px] md:rounded-[40px] overflow-hidden bg-zinc-900 border border-white/5 shadow-2xl">
             {appState === AppState.MATCHMAKING && (
               <MatchmakingOverlay 
                 regionName={REGION_LABELS[session?.region || 'global']} 
                 onCancel={onExit}
+                status={status}
               />
             )}
             
@@ -180,50 +146,26 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ onExit }) => {
 
             <div className="absolute inset-0 pointer-events-none overflow-hidden z-20">
               {activeReactions.filter(r => !r.isLocal).map(reaction => (
-                <div
-                  key={reaction.id}
-                  className="absolute bottom-0 text-5xl md:text-8xl animate-[floatUpEnhanced_2.5s_ease-out_forwards]"
-                  style={{ 
-                    left: `${reaction.x}%`, 
-                    '--rotation': `${reaction.rotation}deg` 
-                  } as any}
-                >
+                <div key={reaction.id} className="absolute bottom-0 text-5xl md:text-8xl animate-[floatUpEnhanced_2.5s_ease-out_forwards]" style={{ left: `${reaction.x}%`, '--rotation': `${reaction.rotation}deg` } as any}>
                   {REACTION_EMOJIS[reaction.type]}
                 </div>
               ))}
             </div>
             
-            <div className="absolute bottom-4 left-4 w-32 md:w-64 aspect-video bg-zinc-950 rounded-2xl md:rounded-3xl overflow-hidden shadow-2xl border border-white/10 z-30 transition-all hover:scale-105 duration-500 group cursor-pointer">
+            <div className="absolute bottom-4 left-4 w-32 md:w-64 aspect-video bg-zinc-950 rounded-2xl md:rounded-3xl overflow-hidden shadow-2xl border border-white/10 z-30 group cursor-pointer">
               <VideoFeed stream={localStream} isRemote={false} label="You" isMuted={true} />
-              
               <div className="absolute inset-0 pointer-events-none overflow-hidden z-10">
                 {activeReactions.filter(r => r.isLocal).map(reaction => (
-                  <div
-                    key={reaction.id}
-                    className="absolute bottom-0 text-3xl md:text-5xl animate-[floatUpEnhanced_2.5s_ease-out_forwards]"
-                    style={{ 
-                      left: `${reaction.x}%`, 
-                      '--rotation': `${reaction.rotation}deg` 
-                    } as any}
-                  >
+                  <div key={reaction.id} className="absolute bottom-0 text-3xl md:text-5xl animate-[floatUpEnhanced_2.5s_ease-out_forwards]" style={{ left: `${reaction.x}%`, '--rotation': `${reaction.rotation}deg` } as any}>
                     {REACTION_EMOJIS[reaction.type]}
                   </div>
                 ))}
               </div>
-
-              {isVideoOff && (
-                <div className="absolute inset-0 bg-zinc-950/90 backdrop-blur-sm flex items-center justify-center animate-in fade-in zoom-in duration-300">
-                  <div className="text-zinc-600 flex flex-col items-center">
-                    <svg className="w-6 h-6 md:w-10 md:h-10 mb-2 opacity-30 animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M3 3l18 18" /></svg>
-                    <span className="text-[8px] md:text-[10px] uppercase font-bold tracking-widest opacity-60">Camera Disabled</span>
-                  </div>
-                </div>
-              )}
             </div>
           </div>
         </div>
 
-        <div className="px-4 pb-4 md:px-6 md:pb-6 bg-gradient-to-t from-black via-black/80 to-transparent">
+        <div className="px-4 pb-4 md:px-6 md:pb-6 bg-black">
           <Controls 
             appState={appState} 
             onNext={skip} 

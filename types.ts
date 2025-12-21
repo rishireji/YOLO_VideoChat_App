@@ -13,9 +13,10 @@ export interface UserSession {
 }
 
 export interface SignalingMessage {
-  type: 'offer' | 'answer' | 'candidate' | 'match_found';
+  type: 'presence' | 'match_request' | 'match_accept' | 'offer' | 'answer' | 'candidate' | 'disconnect';
   senderId: string;
   targetId?: string;
+  region?: Region;
   sdp?: RTCSessionDescriptionInit;
   candidate?: RTCIceCandidateInit;
 }
@@ -38,19 +39,6 @@ export enum AppState {
   DISCONNECTED = 'DISCONNECTED'
 }
 
-export interface ReportReason {
-  id: string;
-  label: string;
-}
-
-export const REPORT_REASONS: ReportReason[] = [
-  { id: 'nudity', label: 'Nudity or Sexual Content' },
-  { id: 'harassment', label: 'Harassment or Bullying' },
-  { id: 'hate', label: 'Hate Speech' },
-  { id: 'spam', label: 'Spam or Bot' },
-  { id: 'other', label: 'Other' }
-];
-
 export const REGION_LABELS: Record<Region, string> = {
   'global': 'Global Match',
   'us-east': 'North America (East)',
@@ -69,3 +57,13 @@ export const REACTION_EMOJIS: Record<ReactionType, string> = {
   heart: '❤️',
   wow: '😮'
 };
+
+// Added missing REPORT_REASONS constant to fix compilation error in ReportModal.tsx
+export const REPORT_REASONS = [
+  { id: 'nudity', label: 'Nudity or Sexual Content' },
+  { id: 'violence', label: 'Violence or Gore' },
+  { id: 'harassment', label: 'Harassment or Bullying' },
+  { id: 'hate', label: 'Hate Speech' },
+  { id: 'spam', label: 'Spam or Scam' },
+  { id: 'other', label: 'Other' }
+];

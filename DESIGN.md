@@ -1,34 +1,24 @@
 
-# YOLO: Production WebRTC Architecture
+# YOLO: Serverless Production Architecture
 
-## 1. The Signaling Phase (WSS)
-WebRTC cannot find peers on its own. Production signaling requires:
-- **WebSocket (wss://)**: Encrypted, bidirectional communication.
-- **Protocol**: JSON messages for `offer`, `answer`, and `ice-candidate`.
-- **Identity**: Map Socket IDs to Session IDs in Redis.
+To bypass the costs and complexities of dedicated signaling servers like Render.com, YOLO uses **PeerJS Cloud** and a **Public Discovery Relay**.
 
-## 2. ICE Traversal (NAT Bypass)
-Standard home routers use NAT. 
-- **STUN (80% of cases)**: Asks a server "What is my public IP?". 
-- **TURN (20% of cases)**: When STUN fails (Symmetric NAT), the TURN server acts as a proxy. 
-- **Recommendation**: Deploy 3x global TURN nodes (US, EU, ASIA) via CoTurn on AWS/GCP.
+## 1. How the "Omegle" Matchmaking Works
+Instead of a central matching server, we use a decentralized "Lobby" system:
+1.  **PeerJS Initialization**: Every user generates a persistent PeerID based on their ephemeral session.
+2.  **Discovery Relay**: Users connect to a public WebSocket (Piesocket/Ably) to "announce" their availability in a specific region.
+3.  **Handshake Arbitration**:
+    - User A and User B see each other on the relay.
+    - If `PeerID_A < PeerID_B`, User A initiates the WebRTC offer.
+    - User B answers the call.
+4.  **P2P Direct**: Once the handshake is complete, the video/audio/chat flows directly between the two laptops. The relay is no longer used.
 
-## 3. Production Connectivity Checklist
+## 2. Advantages for Cross-Network Chat
+- **Port 443 Support**: PeerJS uses standard HTTPS ports, meaning it works behind most office/school firewalls.
+- **Auto-ICE**: It automatically handles the complex negotiation of public vs. private IPs.
+- **Data Channels**: Chat messages are sent via RTCDataChannel, making them faster and more secure than server-based chat.
 
-### Network
-- [ ] **HTTPS Only**: `getUserMedia` and WebRTC are disabled on insecure origins.
-- [ ] **TURN Servers**: Configured with short-lived credentials (TTL).
-- [ ] **UDP Ports**: Ensure ports 49152–65535 are open on your TURN server.
-
-### Signaling
-- [ ] **Candidate Trickling**: Send candidates as they are generated; do not wait for the SDP.
-- [ ] **Perfect Negotiation**: Implement a "polite/impolite" peer logic to handle simultaneous offers (Glare).
-
-### Privacy & Security
-- [ ] **IP Leakage**: Use `iceTransportPolicy: 'relay'` if you want to completely hide user IP addresses from peers (at the cost of server bandwidth).
-- [ ] **Encryption**: DTLS/SRTP is handled automatically by the browser but requires valid certs.
-
-## 4. Debugging Tooling
-- **Chrome**: `chrome://webrtc-internals`
-- **Firefox**: `about:webrtc`
-- **Ice Test**: Use [trickle-ice](https://webrtc.github.io/samples/src/content/peerconnection/trickle-ice/) to verify your TURN credentials work.
+## 3. Production Hardening
+- **STUN Servers**: We use Google and Cloudflare STUN servers for maximum discovery.
+- **ID Rotation**: Peer IDs are changed every time you "Skip," ensuring you never get re-matched with the same person unless desired.
+- **Frame Moderation**: Even in P2P mode, the local AI continues to monitor the camera for safety.

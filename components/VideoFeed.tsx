@@ -18,7 +18,7 @@ export const VideoFeed: React.FC<VideoFeedProps> = ({ stream, isRemote, label, i
   }, [stream]);
 
   return (
-    <div className={`w-full h-full relative overflow-hidden ${!stream ? 'scanline-effect' : ''}`}>
+    <div className="w-full h-full relative overflow-hidden bg-black">
       <video
         ref={videoRef}
         autoPlay
@@ -28,8 +28,8 @@ export const VideoFeed: React.FC<VideoFeedProps> = ({ stream, isRemote, label, i
       />
       
       {!stream && (
-        <div className="absolute inset-0 flex items-center justify-center bg-zinc-900/80 backdrop-blur-md">
-           <div className="flex flex-col items-center">
+        <div className="absolute inset-0 flex items-center justify-center bg-zinc-900/80 backdrop-blur-md scanline-effect">
+           <div className="flex flex-col items-center relative z-10">
               <div className="relative w-16 h-16 mb-6">
                 <div className="absolute inset-0 rounded-full border-4 border-zinc-800"></div>
                 <div className="absolute inset-0 rounded-full border-4 border-red-500 border-t-transparent animate-spin"></div>
@@ -40,12 +40,12 @@ export const VideoFeed: React.FC<VideoFeedProps> = ({ stream, isRemote, label, i
       )}
 
       {/* Decorative corners */}
-      <div className="absolute top-0 left-0 w-8 h-8 border-t-2 border-l-2 border-white/10 m-4 pointer-events-none"></div>
-      <div className="absolute top-0 right-0 w-8 h-8 border-t-2 border-r-2 border-white/10 m-4 pointer-events-none"></div>
-      <div className="absolute bottom-0 left-0 w-8 h-8 border-b-2 border-l-2 border-white/10 m-4 pointer-events-none"></div>
-      <div className="absolute bottom-0 right-0 w-8 h-8 border-b-2 border-r-2 border-white/10 m-4 pointer-events-none"></div>
+      <div className="absolute top-0 left-0 w-8 h-8 border-t-2 border-l-2 border-white/10 m-4 pointer-events-none z-20"></div>
+      <div className="absolute top-0 right-0 w-8 h-8 border-t-2 border-r-2 border-white/10 m-4 pointer-events-none z-20"></div>
+      <div className="absolute bottom-0 left-0 w-8 h-8 border-b-2 border-l-2 border-white/10 m-4 pointer-events-none z-20"></div>
+      <div className="absolute bottom-0 right-0 w-8 h-8 border-b-2 border-r-2 border-white/10 m-4 pointer-events-none z-20"></div>
 
-      <div className="absolute top-4 left-4 z-10">
+      <div className="absolute top-4 left-4 z-30">
         <span className="px-3 py-1 rounded-full bg-black/60 backdrop-blur-xl border border-white/10 text-[10px] font-bold tracking-widest uppercase text-zinc-300 shadow-2xl">
           {label}
         </span>
