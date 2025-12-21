@@ -6,17 +6,13 @@ import { useSession } from '../context/SessionContext';
 
 type WebRTCStatus = 'idle' | 'generating_id' | 'matching' | 'connecting' | 'connected' | 'disconnected' | 'error' | 'signaling_offline' | 'reconnecting';
 
-/**
- * PRODUCTION-GRADE SIGNALING RELAYS
- * We use a rotating set of cluster endpoints to ensure 99.9% availability.
- */
 const SIGNALING_API_KEY = 'VCX6vjaGNoz9grHtfD2vshCwIr9p8f7p9M80jWq6';
 const RELAY_CLUSTERS = [
-  'yolo_v3_alpha',
-  'yolo_v3_beta',
-  'yolo_v3_gamma',
-  'yolo_v3_delta',
-  'yolo_v3_omega'
+  'yolo_v3_shard_1',
+  'yolo_v3_shard_2',
+  'yolo_v3_shard_3',
+  'yolo_v3_shard_4',
+  'yolo_v3_shard_5'
 ];
 
 const ICE_CONFIG = {
@@ -24,15 +20,11 @@ const ICE_CONFIG = {
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
     { urls: 'stun:stun2.l.google.com:19302' },
-    { urls: 'stun:stun.cloudflare.com:3478' },
-    {
-      urls: 'turn:openrelay.metered.ca:443',
-      username: 'openrelayproject',
-      credential: 'openrelayproject'
-    }
+    { urls: 'stun:stun3.l.google.com:19302' },
+    { urls: 'stun:stun4.l.google.com:19302' },
+    { urls: 'stun:stun.cloudflare.com:3478' }
   ],
-  iceCandidatePoolSize: 10,
-  iceTransportPolicy: 'all' as RTCIceTransportPolicy
+  iceCandidatePoolSize: 12
 };
 
 export const useWebRTC = (
@@ -91,9 +83,7 @@ export const useWebRTC = (
           sessionId: session?.id,
           timestamp: Date.now()
         }));
-      } catch (e) {
-        console.debug('[YOLO] Broadcast failed, socket state:', ws.readyState);
-      }
+      } catch (e) {}
     }
   }, [region, session?.id]);
 
@@ -117,7 +107,7 @@ export const useWebRTC = (
     
     connectionTimeoutRef.current = window.setTimeout(() => {
       if (statusRef.current === 'connecting') skip();
-    }, 12000);
+    }, 15000);
   }, [skip]);
 
   const setupDataHandlers = useCallback((conn: DataConnection) => {
@@ -133,19 +123,16 @@ export const useWebRTC = (
   const connectSignaling = useCallback((peerId: string, stream: MediaStream) => {
     if (isClosingRef.current) return;
 
-    // Teardown previous instances cleanly
     if (discoveryWsRef.current) {
       discoveryWsRef.current.onclose = null;
       discoveryWsRef.current.onerror = null;
       discoveryWsRef.current.close();
     }
 
-    const currentCluster = RELAY_CLUSTERS[clusterIdxRef.current % RELAY_CLUSTERS.length];
-    // Using demo cluster as a highly-available alternative if free cluster throttles
-    const host = retryCountRef.current > 3 ? 'demo.piesocket.com' : 'free.piesocket.com';
-    const endpoint = `wss://${host}/v3/${currentCluster}?api_key=${SIGNALING_API_KEY}`;
-    
-    console.debug(`[YOLO] Connecting to relay cluster: ${currentCluster} via ${host}`);
+    // Toggle between free and demo hosts to bypass cluster-specific blocks
+    const host = retryCountRef.current % 2 === 0 ? 'free.piesocket.com' : 'demo.piesocket.com';
+    const cluster = RELAY_CLUSTERS[clusterIdxRef.current % RELAY_CLUSTERS.length];
+    const endpoint = `wss://${host}/v3/${cluster}?api_key=${SIGNALING_API_KEY}`;
     
     const ws = new WebSocket(endpoint);
     discoveryWsRef.current = ws;
@@ -165,14 +152,13 @@ export const useWebRTC = (
         if (ws.readyState === WebSocket.OPEN) {
           try { ws.send(JSON.stringify({ type: 'ping' })); } catch(e) {}
         }
-      }, 8000);
+      }, 7000);
     };
 
     ws.onmessage = (e) => {
       try {
         const msg = JSON.parse(e.data);
         if (msg.type === 'presence' && msg.region === region && msg.peerId !== peerId) {
-          // Handshake Arbitration Logic: Lexicographically smaller ID initiates to prevent double-calls
           if (peerId < msg.peerId && statusRef.current === 'matching') {
             setStatus('connecting');
             const call = peerRef.current?.call(msg.peerId, stream);
@@ -186,7 +172,6 @@ export const useWebRTC = (
 
     ws.onclose = () => {
       if (isClosingRef.current) return;
-      
       setStatus('reconnecting');
       clusterIdxRef.current++;
       retryCountRef.current++;
@@ -194,7 +179,7 @@ export const useWebRTC = (
       if (reconnectTimeoutRef.current) window.clearTimeout(reconnectTimeoutRef.current);
       reconnectTimeoutRef.current = window.setTimeout(() => {
         if (!isClosingRef.current) connectSignaling(peerId, stream);
-      }, 800 + Math.random() * 1000);
+      }, 1000 + Math.random() * 500);
     };
 
     ws.onerror = () => {
@@ -224,7 +209,6 @@ export const useWebRTC = (
 
       peer.on('call', (call) => {
         if (!mounted) return;
-        // Accept only if we are searching
         if (statusRef.current === 'matching' || statusRef.current === 'connecting') {
           setStatus('connecting');
           call.answer(stream);
@@ -240,22 +224,14 @@ export const useWebRTC = (
       });
 
       peer.on('disconnected', () => {
-        if (!isClosingRef.current) {
-          console.debug('[YOLO] Peer disconnected from cloud. Reconnecting...');
-          peer.reconnect();
-        }
+        if (!isClosingRef.current) peer.reconnect();
       });
 
       peer.on('error', (err) => {
-        console.error(`[YOLO] Peer Engine Error: ${err.type}`, err);
-        
-        const criticalErrors = ['network', 'socket-error', 'socket-closed', 'signaling'];
-        if (criticalErrors.includes(err.type)) {
+        if (['network', 'socket-error', 'socket-closed', 'signaling'].includes(err.type)) {
           if (!isClosingRef.current && mounted) {
             peer.destroy();
-            setTimeout(() => {
-              if (mounted) startPeerEngine(id, stream);
-            }, 3000);
+            setTimeout(() => { if (mounted) startPeerEngine(id, stream); }, 4000);
           }
         } else if (err.type === 'browser-incompatible' || err.type === 'unavailable-id') {
           if (mounted) setStatus('error');
@@ -268,19 +244,16 @@ export const useWebRTC = (
       setStatus('generating_id');
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ 
-          video: { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } }, 
+          video: { width: { ideal: 1280 }, height: { ideal: 720 } }, 
           audio: true 
         });
-        
         if (!mounted) { 
           stream.getTracks().forEach(t => t.stop()); 
           return; 
         }
-        
         setLocalStream(stream);
         startPeerEngine(session.id, stream);
       } catch (err) {
-        console.error('[YOLO] Media Access Denied:', err);
         if (mounted) setStatus('error');
       }
     };
@@ -291,28 +264,15 @@ export const useWebRTC = (
       mounted = false;
       isClosingRef.current = true;
       cleanup();
-      
-      if (peerRef.current) {
-        peerRef.current.destroy();
-        peerRef.current = null;
-      }
-      
+      if (peerRef.current) peerRef.current.destroy();
       if (discoveryWsRef.current) {
         discoveryWsRef.current.onclose = null;
         discoveryWsRef.current.close();
-        discoveryWsRef.current = null;
       }
-      
       if (heartbeatIntervalRef.current) window.clearInterval(heartbeatIntervalRef.current);
       if (wsKeepAliveIntervalRef.current) window.clearInterval(wsKeepAliveIntervalRef.current);
       if (reconnectTimeoutRef.current) window.clearTimeout(reconnectTimeoutRef.current);
-      
-      if (localStream) {
-        localStream.getTracks().forEach(track => {
-          track.stop();
-          track.enabled = false;
-        });
-      }
+      if (localStream) localStream.getTracks().forEach(track => track.stop());
     };
   }, [session?.id, cleanup, connectSignaling, setupCallHandlers, setupDataHandlers]);
 
