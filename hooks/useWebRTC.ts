@@ -4,7 +4,7 @@ import { Peer, DataConnection, MediaConnection } from 'peerjs';
 import { Region, ReactionType } from '../types';
 import { useSession } from '../context/SessionContext';
 
-// Fix: Added 'signaling_offline' to WebRTCStatus union type to match the expected statuses in ChatRoom.tsx
+// Added 'signaling_offline' to WebRTCStatus union type to match the expected statuses in ChatRoom.tsx
 type WebRTCStatus = 'idle' | 'generating_id' | 'matching' | 'connecting' | 'connected' | 'disconnected' | 'error' | 'signaling_offline';
 
 /**
@@ -57,73 +57,89 @@ export const useWebRTC = (
     const initPeer = async () => {
       setStatus('generating_id');
       
-      // Initialize Media first
-      const stream = await navigator.mediaDevices.getUserMedia({ 
-        video: { width: { ideal: 1280 }, height: { ideal: 720 } }, 
-        audio: true 
-      });
-      setLocalStream(stream);
+      try {
+        // Initialize Media first
+        const stream = await navigator.mediaDevices.getUserMedia({ 
+          video: { width: { ideal: 1280 }, height: { ideal: 720 } }, 
+          audio: true 
+        });
+        setLocalStream(stream);
 
-      // Create Peer
-      const peer = new Peer(session?.id || '', {
-        debug: 1,
-        config: {
-          iceServers: [
-            { urls: 'stun:stun.l.google.com:19302' },
-            { urls: 'stun:stun1.l.google.com:19302' },
-            { urls: 'stun:stun.cloudflare.com:3478' }
-          ]
-        }
-      });
-
-      peer.on('open', (id) => {
-        console.log('[PeerJS] ID:', id);
-        setStatus('matching');
-        
-        // Connect to discovery relay for matchmaking
-        const ws = new WebSocket(DISCOVERY_RELAY);
-        ws.onopen = () => {
-          discoveryWsRef.current = ws;
-          skip();
-        };
-
-        ws.onmessage = (e) => {
-          const msg = JSON.parse(e.data);
-          
-          // Matchmaking logic: If we see another peer in our region
-          if (msg.type === 'presence' && msg.region === region && msg.peerId !== id) {
-            // Arbitration: Smaller PeerID initiates the call
-            if (id < msg.peerId && status === 'matching') {
-              console.log('[PeerJS] Matching with:', msg.peerId);
-              setStatus('connecting');
-              
-              const call = peer.call(msg.peerId, stream);
-              const conn = peer.connect(msg.peerId);
-              
-              setupCallHandlers(call);
-              setupDataHandlers(conn);
-            }
+        // Create Peer
+        const peer = new Peer(session?.id || '', {
+          debug: 1,
+          config: {
+            iceServers: [
+              { urls: 'stun:stun.l.google.com:19302' },
+              { urls: 'stun:stun1.l.google.com:19302' },
+              { urls: 'stun:stun.cloudflare.com:3478' }
+            ]
           }
-        };
-      });
+        });
 
-      peer.on('call', (call) => {
-        console.log('[PeerJS] Incoming call...');
-        setStatus('connecting');
-        call.answer(stream);
-        setupCallHandlers(call);
-      });
+        peer.on('open', (id) => {
+          console.log('[PeerJS] ID:', id);
+          setStatus('matching');
+          
+          // Connect to discovery relay for matchmaking
+          const ws = new WebSocket(DISCOVERY_RELAY);
+          
+          ws.onopen = () => {
+            discoveryWsRef.current = ws;
+            skip();
+          };
 
-      peer.on('connection', (conn) => {
-        setupDataHandlers(conn);
-      });
+          ws.onmessage = (e) => {
+            const msg = JSON.parse(e.data);
+            
+            // Matchmaking logic: If we see another peer in our region
+            if (msg.type === 'presence' && msg.region === region && msg.peerId !== id) {
+              // Arbitration: Smaller PeerID initiates the call
+              if (id < msg.peerId && status === 'matching') {
+                console.log('[PeerJS] Matching with:', msg.peerId);
+                setStatus('connecting');
+                
+                const call = peer.call(msg.peerId, stream);
+                const conn = peer.connect(msg.peerId);
+                
+                setupCallHandlers(call);
+                setupDataHandlers(conn);
+              }
+            }
+          };
 
-      peer.on('error', (err) => {
-        console.error('[PeerJS] Error:', err);
+          ws.onclose = () => {
+             console.warn('[Discovery] Relay connection closed');
+             if (status === 'matching') setStatus('signaling_offline');
+          };
+
+          ws.onerror = (err) => {
+             console.error('[Discovery] Relay error:', err);
+             setStatus('error');
+          };
+        });
+
+        peer.on('call', (call) => {
+          console.log('[PeerJS] Incoming call...');
+          setStatus('connecting');
+          call.answer(stream);
+          setupCallHandlers(call);
+        });
+
+        peer.on('connection', (conn) => {
+          setupDataHandlers(conn);
+        });
+
+        peer.on('error', (err) => {
+          console.error('[PeerJS] Error:', err);
+          setStatus('error');
+        });
+
+        peerRef.current = peer;
+      } catch (err) {
+        console.error('[Media] Access denied or error:', err);
         setStatus('error');
-      });
-
-      peerRef.current = peer;
+      }
     };
 
     const setupCallHandlers = (call: MediaConnection) => {
@@ -152,7 +168,7 @@ export const useWebRTC = (
       discoveryWsRef.current?.close();
       if (matchmakingIntervalRef.current) clearInterval(matchmakingIntervalRef.current);
     };
-  }, [session?.id, region]);
+  }, [session?.id, region, skip, onMessageReceived, onReactionReceived]);
 
   return {
     localStream, remoteStream, status, 
