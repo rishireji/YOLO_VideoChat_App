@@ -1,4 +1,5 @@
 
+import { useCallback } from 'react';
 import { GoogleGenAI, Type } from "@google/genai";
 
 export interface TranslationResult {
@@ -7,7 +8,7 @@ export interface TranslationResult {
 }
 
 export const useTranslation = () => {
-  const translateText = async (text: string, targetLanguage: string): Promise<TranslationResult | null> => {
+  const translateText = useCallback(async (text: string, targetLanguage: string): Promise<TranslationResult | null> => {
     try {
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       const response = await ai.models.generateContent({
@@ -43,7 +44,7 @@ export const useTranslation = () => {
       console.error("[YOLO Translation] Error:", error);
       return null;
     }
-  };
+  }, []);
 
   return { translateText };
 };

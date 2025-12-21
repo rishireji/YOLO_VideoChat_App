@@ -12,16 +12,34 @@ export const VideoFeed: React.FC<VideoFeedProps> = ({ stream, isRemote, label, i
   const videoRef = useRef<HTMLVideoElement>(null);
 
   useEffect(() => {
-    if (videoRef.current && stream) {
-      videoRef.current.srcObject = stream;
+    const video = videoRef.current;
+    if (!video) return;
+
+    if (stream) {
+      video.srcObject = stream;
+      // Manually handle the play promise to catch interruptions (AbortError)
+      // which happen frequently when skipping rooms or switching feeds.
+      const playPromise = video.play();
+      if (playPromise !== undefined) {
+        playPromise.catch(error => {
+          if (error.name !== 'AbortError') {
+            console.warn(`[VideoFeed] Playback failed for ${label}:`, error);
+          }
+        });
+      }
+    } else {
+      video.srcObject = null;
     }
-  }, [stream]);
+
+    return () => {
+      video.srcObject = null;
+    };
+  }, [stream, label]);
 
   return (
     <div className="w-full h-full relative overflow-hidden bg-black">
       <video
         ref={videoRef}
-        autoPlay
         playsInline
         muted={isMuted}
         className={`w-full h-full object-cover transition-all duration-1000 transform ${stream ? 'opacity-100 scale-100 grayscale-0' : 'opacity-0 scale-110 grayscale blur-sm'}`}

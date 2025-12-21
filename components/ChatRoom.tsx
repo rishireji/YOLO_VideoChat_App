@@ -89,6 +89,7 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ onExit }) => {
     switch (status) {
       case 'matching':
       case 'connecting':
+      case 'generating_id':
       case 'signaling_offline':
         setAppState(AppState.MATCHMAKING);
         break;
@@ -103,6 +104,10 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ onExit }) => {
         break;
       case 'disconnected':
         setAppState(AppState.DISCONNECTED);
+        break;
+      case 'error':
+        // Stay in matchmaking but the overlay handles the error display
+        setAppState(AppState.MATCHMAKING);
         break;
     }
   }, [status]);
