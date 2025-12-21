@@ -38,7 +38,8 @@ export const useTranslation = () => {
         }
       });
 
-      const result = JSON.parse(response.text);
+      const textOutput = response.text || '{}';
+      const result = JSON.parse(textOutput);
       return result as TranslationResult;
     } catch (error) {
       console.error("[YOLO Translation] Error:", error);

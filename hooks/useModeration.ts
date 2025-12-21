@@ -85,7 +85,8 @@ export const useModeration = (stream: MediaStream | null) => {
           }
         });
 
-        const result = JSON.parse(response.text);
+        const textOutput = response.text || '{}';
+        const result = JSON.parse(textOutput);
         if (result.is_safe === false) {
           console.error("[YOLO Compliance] Violations detected:", result.reason);
           updateSession({ isModerated: true });
