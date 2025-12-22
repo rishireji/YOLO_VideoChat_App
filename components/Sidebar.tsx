@@ -56,7 +56,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ messages, onSendMessage, onTog
         {messages.length === 0 ? (
           <div className="h-full flex flex-col items-center justify-center text-center px-6 lg:px-10 animate-in fade-in duration-1000">
             <div className="w-12 h-12 lg:w-16 lg:h-16 bg-zinc-900 rounded-[20px] lg:rounded-3xl flex items-center justify-center mb-4 lg:mb-6 border border-zinc-800 rotate-12 shadow-xl hover:rotate-0 transition-transform duration-500 shadow-red-900/5">
-               <svg className="w-6 h-6 lg:w-8 lg:h-8 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M17 8h2a2 2 0 012 2v6a2 2 0 01-2 2h-2v4l-4-4H9a1.994-.586m0 0L11 14h4a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2v4l.586-.586z"/></svg>
+               <svg className="w-6 h-6 lg:w-8 lg:h-8 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"/></svg>
             </div>
             <p className="text-zinc-300 text-xs lg:text-sm font-bold uppercase tracking-tight animate-pulse">Finding Peers...</p>
             <p className="text-zinc-500 text-[10px] lg:text-xs mt-2 italic leading-relaxed opacity-60">Connections are ephemeral. Witness the moment.</p>

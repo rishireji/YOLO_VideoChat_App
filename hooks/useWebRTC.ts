@@ -6,15 +6,16 @@ import { useSession } from '../context/SessionContext';
 
 type WebRTCStatus = 'idle' | 'generating_id' | 'matching' | 'connecting' | 'connected' | 'disconnected' | 'error' | 'signaling_offline' | 'reconnecting';
 
-// PRODUCTION SIGNALING CONFIG
+/**
+ * PRODUCTION CONNECTIVITY CONFIG
+ * Using PieSocket for discovery and PeerJS for the WebRTC stack.
+ */
 const SIGNALING_API_KEY = 'VCX6vjaGNoz9grHtfD2vshCwIr9p8f7p9M80jWq6';
 
-/**
- * FIX: Deterministic Cluster Mapping
- * Maps regions to specific clusters so users in the same region ALWAYS find each other.
- */
-const REGION_CLUSTER_MAP: Record<Region, string> = {
-  'global': 'yolo_v3_main_lobby',
+// FIX 1: Deterministic Sharding
+// Ensures users in the same region ALWAYS land in the same signaling room.
+const REGION_CHANNEL_MAP: Record<Region, string> = {
+  'global': 'yolo_v3_global_lobby',
   'us-east': 'yolo_v3_na_east',
   'us-west': 'yolo_v3_na_west',
   'europe': 'yolo_v3_eu_central',
@@ -24,15 +25,12 @@ const REGION_CLUSTER_MAP: Record<Region, string> = {
   'oceania': 'yolo_v3_oceania'
 };
 
-/**
- * FIX: Hybrid ICE Configuration
- * Added high-availability STUN and a fallback TURN server for mobile/firewall support.
- */
+// FIX 2: ICE Configuration (STUN + TURN)
+// TURN is mandatory for Vercel/Production to bypass strict firewalls (Symmetric NAT).
 const ICE_CONFIG = {
   iceServers: [
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
-    { urls: 'stun:stun2.l.google.com:19302' },
     { urls: 'stun:stun.cloudflare.com:3478' },
     {
       urls: 'turn:openrelay.metered.ca:443',
@@ -40,8 +38,7 @@ const ICE_CONFIG = {
       credential: 'openrelayproject'
     }
   ],
-  iceCandidatePoolSize: 10,
-  iceTransportPolicy: 'all' as RTCIceTransportPolicy
+  iceCandidatePoolSize: 10
 };
 
 export const useWebRTC = (
@@ -61,19 +58,12 @@ export const useWebRTC = (
   const connRef = useRef<DataConnection | null>(null);
   const discoveryWsRef = useRef<WebSocket | null>(null);
   const connectionTimeoutRef = useRef<number | null>(null);
-  const heartbeatIntervalRef = useRef<number | null>(null);
-  const wsKeepAliveIntervalRef = useRef<number | null>(null);
-  const reconnectTimeoutRef = useRef<number | null>(null);
+  const presenceIntervalRef = useRef<number | null>(null);
   const isClosingRef = useRef(false);
-  const retryCountRef = useRef(0);
   
+  // Refs for state access inside callbacks to avoid stale closures
   const statusRef = useRef<WebRTCStatus>('idle');
-  const onMsgRef = useRef(onMessageReceived);
-  const onReactRef = useRef(onReactionReceived);
-
   useEffect(() => { statusRef.current = status; }, [status]);
-  useEffect(() => { onMsgRef.current = onMessageReceived; }, [onMessageReceived]);
-  useEffect(() => { onReactRef.current = onReactionReceived; }, [onReactionReceived]);
 
   const cleanup = useCallback(() => {
     if (callRef.current) {
@@ -91,25 +81,19 @@ export const useWebRTC = (
   const broadcastPresence = useCallback(() => {
     const ws = discoveryWsRef.current;
     if (ws && ws.readyState === WebSocket.OPEN && peerRef.current?.id) {
-      try {
-        ws.send(JSON.stringify({
-          type: 'presence',
-          peerId: peerRef.current.id,
-          region,
-          sessionId: session?.id,
-          timestamp: Date.now()
-        }));
-      } catch (e) {
-        console.debug('[YOLO] Presence broadcast failed');
-      }
+      ws.send(JSON.stringify({
+        type: 'presence',
+        peerId: peerRef.current.id,
+        region,
+        status: statusRef.current, // FIX: Tell others if we are ready to match
+        timestamp: Date.now()
+      }));
     }
-  }, [region, session?.id]);
+  }, [region]);
 
   const skip = useCallback(() => {
     cleanup();
-    if (statusRef.current === 'connected' || statusRef.current === 'connecting') {
-      setStatus('matching');
-    }
+    setStatus('matching');
     broadcastPresence();
   }, [cleanup, broadcastPresence]);
 
@@ -124,66 +108,45 @@ export const useWebRTC = (
     callRef.current = call;
     
     connectionTimeoutRef.current = window.setTimeout(() => {
-      if (statusRef.current === 'connecting') {
-        console.debug('[YOLO] Call handshake timed out');
-        skip();
-      }
-    }, 20000); // 20s for mobile/high-latency paths
+      if (statusRef.current === 'connecting') skip();
+    }, 15000);
   }, [skip]);
 
   const setupDataHandlers = useCallback((conn: DataConnection) => {
     conn.on('data', (data: any) => {
-      if (data.type === 'chat') onMsgRef.current?.(data.text);
-      if (data.type === 'reaction') onReactRef.current?.(data.value);
+      if (data.type === 'chat') onMessageReceived?.(data.text);
+      if (data.type === 'reaction') onReactionReceived?.(data.value);
     });
     conn.on('close', skip);
     conn.on('error', skip);
     connRef.current = conn;
-  }, [skip]);
+  }, [skip, onMessageReceived, onReactionReceived]);
 
   const connectSignaling = useCallback((peerId: string, stream: MediaStream) => {
     if (isClosingRef.current) return;
 
-    if (discoveryWsRef.current) {
-      discoveryWsRef.current.onclose = null;
-      discoveryWsRef.current.onerror = null;
-      discoveryWsRef.current.close();
-    }
-
-    // Use deterministic cluster based on region + toggle fallback host on retry
-    const host = retryCountRef.current % 2 === 0 ? 'free.piesocket.com' : 'demo.piesocket.com';
-    const cluster = REGION_CLUSTER_MAP[region] || REGION_CLUSTER_MAP.global;
-    const endpoint = `wss://${host}/v3/${cluster}?api_key=${SIGNALING_API_KEY}`;
-    
-    console.debug(`[YOLO] Signaling: Cluster ${cluster} via ${host}`);
+    // Use demo cluster for better stability on unverified domains
+    const channel = REGION_CHANNEL_MAP[region] || REGION_CHANNEL_MAP.global;
+    const endpoint = `wss://demo.piesocket.com/v3/${channel}?api_key=${SIGNALING_API_KEY}`;
     
     const ws = new WebSocket(endpoint);
     discoveryWsRef.current = ws;
     
     ws.onopen = () => {
-      retryCountRef.current = 0;
-      if (statusRef.current === 'reconnecting' || statusRef.current === 'signaling_offline') {
-        setStatus('matching');
-      }
+      if (statusRef.current === 'reconnecting') setStatus('matching');
       broadcastPresence();
-      
-      if (heartbeatIntervalRef.current) window.clearInterval(heartbeatIntervalRef.current);
-      heartbeatIntervalRef.current = window.setInterval(broadcastPresence, 4000);
-
-      if (wsKeepAliveIntervalRef.current) window.clearInterval(wsKeepAliveIntervalRef.current);
-      wsKeepAliveIntervalRef.current = window.setInterval(() => {
-        if (ws.readyState === WebSocket.OPEN) {
-          try { ws.send(JSON.stringify({ type: 'ping' })); } catch(e) {}
-        }
-      }, 10000);
+      if (presenceIntervalRef.current) window.clearInterval(presenceIntervalRef.current);
+      presenceIntervalRef.current = window.setInterval(broadcastPresence, 3000);
     };
 
     ws.onmessage = (e) => {
       try {
         const msg = JSON.parse(e.data);
-        if (msg.type === 'presence' && msg.region === region && msg.peerId !== peerId) {
-          // Handshake Logic: The smaller PeerID acts as the "Master/Offerer"
-          if (peerId < msg.peerId && statusRef.current === 'matching') {
+        if (msg.type === 'presence' && msg.peerId !== peerId) {
+          // FIX 3: Robust Handshake Arbitration
+          // Only offer if we are matching AND the other peer is also matching
+          // Comparison ensures only one side starts the call
+          if (peerId < msg.peerId && statusRef.current === 'matching' && msg.status === 'matching') {
             setStatus('connecting');
             const call = peerRef.current?.call(msg.peerId, stream);
             const conn = peerRef.current?.connect(msg.peerId, { reliable: true });
@@ -197,88 +160,54 @@ export const useWebRTC = (
     ws.onclose = () => {
       if (isClosingRef.current) return;
       setStatus('reconnecting');
-      retryCountRef.current++;
-      
-      if (reconnectTimeoutRef.current) window.clearTimeout(reconnectTimeoutRef.current);
-      reconnectTimeoutRef.current = window.setTimeout(() => {
+      setTimeout(() => {
         if (!isClosingRef.current) connectSignaling(peerId, stream);
-      }, 2000 + Math.random() * 1000);
-    };
-
-    ws.onerror = () => {
-      if (ws.readyState !== WebSocket.CLOSED) ws.close();
+      }, 3000);
     };
   }, [region, broadcastPresence, setupCallHandlers, setupDataHandlers]);
 
   useEffect(() => {
     let mounted = true;
-    isClosingRef.current = false;
-
-    const startPeerEngine = (id: string, stream: MediaStream) => {
-      if (!mounted) return;
-      
-      const peer = new Peer(id, { 
-        debug: 1, 
-        config: ICE_CONFIG,
-        secure: true
-      });
-      peerRef.current = peer;
-
-      peer.on('open', (peerId) => {
-        if (!mounted) return;
-        setStatus('matching');
-        connectSignaling(peerId, stream);
-      });
-
-      peer.on('call', (call) => {
-        if (!mounted) return;
-        if (statusRef.current === 'matching' || statusRef.current === 'connecting') {
-          setStatus('connecting');
-          call.answer(stream);
-          setupCallHandlers(call);
-        } else {
-          call.close();
-        }
-      });
-
-      peer.on('connection', (conn) => {
-        if (!mounted) return;
-        setupDataHandlers(conn);
-      });
-
-      peer.on('disconnected', () => {
-        if (!isClosingRef.current) peer.reconnect();
-      });
-
-      peer.on('error', (err) => {
-        console.warn(`[YOLO] Peer Engine Event: ${err.type}`);
-        if (['network', 'socket-error', 'socket-closed', 'signaling'].includes(err.type)) {
-          if (!isClosingRef.current && mounted) {
-            peer.destroy();
-            setTimeout(() => { if (mounted) startPeerEngine(id, stream); }, 5000);
-          }
-        } else if (err.type === 'browser-incompatible' || err.type === 'unavailable-id') {
-          if (mounted) setStatus('error');
-        }
-      });
-    };
-
     const init = async () => {
-      if (!session?.id) return;
       setStatus('generating_id');
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({ 
-          video: { width: { ideal: 1280 }, height: { ideal: 720 } }, 
-          audio: true 
-        });
-        if (!mounted) { 
-          stream.getTracks().forEach(t => t.stop()); 
-          return; 
-        }
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+        if (!mounted) return;
         setLocalStream(stream);
-        startPeerEngine(session.id, stream);
+
+        const peer = new Peer(session?.id || crypto.randomUUID(), { 
+          debug: 1, 
+          config: ICE_CONFIG,
+          secure: true 
+        });
+        peerRef.current = peer;
+
+        peer.on('open', (id) => {
+          if (!mounted) return;
+          setStatus('matching');
+          connectSignaling(id, stream);
+        });
+
+        peer.on('call', (call) => {
+          if (statusRef.current === 'matching' || statusRef.current === 'connecting') {
+            setStatus('connecting');
+            call.answer(stream);
+            setupCallHandlers(call);
+          } else {
+            call.close();
+          }
+        });
+
+        peer.on('connection', (conn) => {
+          setupDataHandlers(conn);
+        });
+
+        peer.on('error', (err) => {
+          if (err.type === 'peer-unavailable') skip();
+          if (err.type === 'network') setStatus('reconnecting');
+        });
+
       } catch (err) {
-        console.error('[YOLO] Media failed:', err);
         if (mounted) setStatus('error');
       }
     };
@@ -290,16 +219,11 @@ export const useWebRTC = (
       isClosingRef.current = true;
       cleanup();
       if (peerRef.current) peerRef.current.destroy();
-      if (discoveryWsRef.current) {
-        discoveryWsRef.current.onclose = null;
-        discoveryWsRef.current.close();
-      }
-      if (heartbeatIntervalRef.current) window.clearInterval(heartbeatIntervalRef.current);
-      if (wsKeepAliveIntervalRef.current) window.clearInterval(wsKeepAliveIntervalRef.current);
-      if (reconnectTimeoutRef.current) window.clearTimeout(reconnectTimeoutRef.current);
-      if (localStream) localStream.getTracks().forEach(track => track.stop());
+      if (discoveryWsRef.current) discoveryWsRef.current.close();
+      if (presenceIntervalRef.current) window.clearInterval(presenceIntervalRef.current);
+      if (localStream) localStream.getTracks().forEach(t => t.stop());
     };
-  }, [session?.id, cleanup, connectSignaling, setupCallHandlers, setupDataHandlers]);
+  }, [session?.id]);
 
   return {
     localStream, remoteStream, status, 
@@ -312,14 +236,14 @@ export const useWebRTC = (
     skip, isMuted, isVideoOff, 
     toggleMute: () => {
       if (localStream) {
-        const t = localStream.getAudioTracks()[0];
-        if (t) { t.enabled = isMuted; setIsMuted(!isMuted); }
+        localStream.getAudioTracks()[0].enabled = isMuted;
+        setIsMuted(!isMuted);
       }
     },
     toggleVideo: () => {
       if (localStream) {
-        const t = localStream.getVideoTracks()[0];
-        if (t) { t.enabled = isVideoOff; setIsVideoOff(!isVideoOff); }
+        localStream.getVideoTracks()[0].enabled = isVideoOff;
+        setIsVideoOff(!isVideoOff);
       }
     }
   };
