@@ -18,23 +18,23 @@ export const MatchmakingOverlay: React.FC<MatchmakingOverlayProps> = ({
 
   const getStatusText = () => {
     switch(status) {
-      case 'generating_id': return 'Peer Core Loading';
-      case 'connecting': return 'Handshake Syncing';
-      case 'error': return 'Access Required';
+      case 'generating_id': return 'Core Booting';
+      case 'connecting': return 'Handshake Link';
+      case 'error': return 'Permission Denied';
       case 'reconnecting':
-      case 'signaling_offline': return 'Signal Disruption';
+      case 'signaling_offline': return 'Signal Disrupted';
       default: return 'Scanning Lobby';
     }
   };
 
   const getStatusDesc = () => {
     switch(status) {
-      case 'generating_id': return 'Provisioning secure P2P tunnel...';
-      case 'connecting': return 'Optimizing relay path for high-definition video...';
-      case 'error': return 'Camera and Microphone access is required to connect with peers.';
+      case 'generating_id': return 'Initializing secure identity and peer core...';
+      case 'connecting': return 'Synchronizing media streams with your match...';
+      case 'error': return 'Please enable Camera and Microphone access to continue.';
       case 'reconnecting':
-      case 'signaling_offline': return 'Lobby relay is unstable. Automatically rotating to a healthy cluster...';
-      default: return `Searching for an available partner in ${regionName}.`;
+      case 'signaling_offline': return 'Connection lost. Automatically re-routing through a healthy relay...';
+      default: return `Hunting for a partner in the ${regionName} lobby.`;
     }
   };
 
@@ -91,7 +91,7 @@ export const MatchmakingOverlay: React.FC<MatchmakingOverlayProps> = ({
             <div className="px-5 py-2.5 bg-zinc-900/50 border border-zinc-800 rounded-2xl flex items-center gap-2">
                 <span className={`w-2 h-2 rounded-full ${isReconnecting ? 'bg-amber-500 animate-ping' : 'bg-green-500'}`}></span>
                 <span className="text-[11px] font-bold text-zinc-400 uppercase tracking-widest">
-                  {isReconnecting ? 'Self-Healing' : 'P2P Ready'}
+                  {isReconnecting ? 'Self-Healing' : 'P2P Link Active'}
                 </span>
             </div>
           </div>
