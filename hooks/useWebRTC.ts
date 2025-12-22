@@ -6,25 +6,42 @@ import { useSession } from '../context/SessionContext';
 
 type WebRTCStatus = 'idle' | 'generating_id' | 'matching' | 'connecting' | 'connected' | 'disconnected' | 'error' | 'signaling_offline' | 'reconnecting';
 
+// PRODUCTION SIGNALING CONFIG
 const SIGNALING_API_KEY = 'VCX6vjaGNoz9grHtfD2vshCwIr9p8f7p9M80jWq6';
-const RELAY_CLUSTERS = [
-  'yolo_v3_shard_1',
-  'yolo_v3_shard_2',
-  'yolo_v3_shard_3',
-  'yolo_v3_shard_4',
-  'yolo_v3_shard_5'
-];
 
+/**
+ * FIX: Deterministic Cluster Mapping
+ * Maps regions to specific clusters so users in the same region ALWAYS find each other.
+ */
+const REGION_CLUSTER_MAP: Record<Region, string> = {
+  'global': 'yolo_v3_main_lobby',
+  'us-east': 'yolo_v3_na_east',
+  'us-west': 'yolo_v3_na_west',
+  'europe': 'yolo_v3_eu_central',
+  'asia': 'yolo_v3_asia_pac',
+  'south-america': 'yolo_v3_latam',
+  'africa': 'yolo_v3_africa',
+  'oceania': 'yolo_v3_oceania'
+};
+
+/**
+ * FIX: Hybrid ICE Configuration
+ * Added high-availability STUN and a fallback TURN server for mobile/firewall support.
+ */
 const ICE_CONFIG = {
   iceServers: [
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
     { urls: 'stun:stun2.l.google.com:19302' },
-    { urls: 'stun:stun3.l.google.com:19302' },
-    { urls: 'stun:stun4.l.google.com:19302' },
-    { urls: 'stun:stun.cloudflare.com:3478' }
+    { urls: 'stun:stun.cloudflare.com:3478' },
+    {
+      urls: 'turn:openrelay.metered.ca:443',
+      username: 'openrelayproject',
+      credential: 'openrelayproject'
+    }
   ],
-  iceCandidatePoolSize: 12
+  iceCandidatePoolSize: 10,
+  iceTransportPolicy: 'all' as RTCIceTransportPolicy
 };
 
 export const useWebRTC = (
@@ -47,7 +64,6 @@ export const useWebRTC = (
   const heartbeatIntervalRef = useRef<number | null>(null);
   const wsKeepAliveIntervalRef = useRef<number | null>(null);
   const reconnectTimeoutRef = useRef<number | null>(null);
-  const clusterIdxRef = useRef(Math.floor(Math.random() * RELAY_CLUSTERS.length));
   const isClosingRef = useRef(false);
   const retryCountRef = useRef(0);
   
@@ -83,7 +99,9 @@ export const useWebRTC = (
           sessionId: session?.id,
           timestamp: Date.now()
         }));
-      } catch (e) {}
+      } catch (e) {
+        console.debug('[YOLO] Presence broadcast failed');
+      }
     }
   }, [region, session?.id]);
 
@@ -106,8 +124,11 @@ export const useWebRTC = (
     callRef.current = call;
     
     connectionTimeoutRef.current = window.setTimeout(() => {
-      if (statusRef.current === 'connecting') skip();
-    }, 15000);
+      if (statusRef.current === 'connecting') {
+        console.debug('[YOLO] Call handshake timed out');
+        skip();
+      }
+    }, 20000); // 20s for mobile/high-latency paths
   }, [skip]);
 
   const setupDataHandlers = useCallback((conn: DataConnection) => {
@@ -129,10 +150,12 @@ export const useWebRTC = (
       discoveryWsRef.current.close();
     }
 
-    // Toggle between free and demo hosts to bypass cluster-specific blocks
+    // Use deterministic cluster based on region + toggle fallback host on retry
     const host = retryCountRef.current % 2 === 0 ? 'free.piesocket.com' : 'demo.piesocket.com';
-    const cluster = RELAY_CLUSTERS[clusterIdxRef.current % RELAY_CLUSTERS.length];
+    const cluster = REGION_CLUSTER_MAP[region] || REGION_CLUSTER_MAP.global;
     const endpoint = `wss://${host}/v3/${cluster}?api_key=${SIGNALING_API_KEY}`;
+    
+    console.debug(`[YOLO] Signaling: Cluster ${cluster} via ${host}`);
     
     const ws = new WebSocket(endpoint);
     discoveryWsRef.current = ws;
@@ -145,20 +168,21 @@ export const useWebRTC = (
       broadcastPresence();
       
       if (heartbeatIntervalRef.current) window.clearInterval(heartbeatIntervalRef.current);
-      heartbeatIntervalRef.current = window.setInterval(broadcastPresence, 3000);
+      heartbeatIntervalRef.current = window.setInterval(broadcastPresence, 4000);
 
       if (wsKeepAliveIntervalRef.current) window.clearInterval(wsKeepAliveIntervalRef.current);
       wsKeepAliveIntervalRef.current = window.setInterval(() => {
         if (ws.readyState === WebSocket.OPEN) {
           try { ws.send(JSON.stringify({ type: 'ping' })); } catch(e) {}
         }
-      }, 7000);
+      }, 10000);
     };
 
     ws.onmessage = (e) => {
       try {
         const msg = JSON.parse(e.data);
         if (msg.type === 'presence' && msg.region === region && msg.peerId !== peerId) {
+          // Handshake Logic: The smaller PeerID acts as the "Master/Offerer"
           if (peerId < msg.peerId && statusRef.current === 'matching') {
             setStatus('connecting');
             const call = peerRef.current?.call(msg.peerId, stream);
@@ -173,13 +197,12 @@ export const useWebRTC = (
     ws.onclose = () => {
       if (isClosingRef.current) return;
       setStatus('reconnecting');
-      clusterIdxRef.current++;
       retryCountRef.current++;
       
       if (reconnectTimeoutRef.current) window.clearTimeout(reconnectTimeoutRef.current);
       reconnectTimeoutRef.current = window.setTimeout(() => {
         if (!isClosingRef.current) connectSignaling(peerId, stream);
-      }, 1000 + Math.random() * 500);
+      }, 2000 + Math.random() * 1000);
     };
 
     ws.onerror = () => {
@@ -228,10 +251,11 @@ export const useWebRTC = (
       });
 
       peer.on('error', (err) => {
+        console.warn(`[YOLO] Peer Engine Event: ${err.type}`);
         if (['network', 'socket-error', 'socket-closed', 'signaling'].includes(err.type)) {
           if (!isClosingRef.current && mounted) {
             peer.destroy();
-            setTimeout(() => { if (mounted) startPeerEngine(id, stream); }, 4000);
+            setTimeout(() => { if (mounted) startPeerEngine(id, stream); }, 5000);
           }
         } else if (err.type === 'browser-incompatible' || err.type === 'unavailable-id') {
           if (mounted) setStatus('error');
@@ -254,6 +278,7 @@ export const useWebRTC = (
         setLocalStream(stream);
         startPeerEngine(session.id, stream);
       } catch (err) {
+        console.error('[YOLO] Media failed:', err);
         if (mounted) setStatus('error');
       }
     };
