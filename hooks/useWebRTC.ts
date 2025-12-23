@@ -85,7 +85,7 @@ export const useWebRTC = (
     console.info("[YOLO] SKIP: Resetting connection state...");
     cleanup();
     setStatus('matching');
-    // Announce availability on the new cluster channel
+    // Announce availability on the channel
     broadcast({
       type: 'presence',
       peerId: peerRef.current?.id,
@@ -118,7 +118,7 @@ export const useWebRTC = (
   }, [skip, onMessageReceived, onReactionReceived]);
 
   const initiateP2P = useCallback((remoteId: string, stream: MediaStream) => {
-    if (statusRef.current !== 'matching') return;
+    if (statusRef.current !== 'matching' && statusRef.current !== 'connecting') return;
     
     console.log(`[YOLO] Handshake: Calling target peer ${remoteId}`);
     setStatus('connecting');
@@ -142,7 +142,6 @@ export const useWebRTC = (
     if (isClosingRef.current) return;
 
     const channel = REGION_CHANNEL_MAP[region] || REGION_CHANNEL_MAP.global;
-    // Private Cluster Endpoint with Presence enabled
     const endpoint = `wss://${PIESOCKET_CLUSTER}/v3/${channel}?api_key=${SIGNALING_API_KEY}&notify_self=1&presence=true`;
     
     console.log("[YOLO] Signaling: Connecting to Private Cluster...");
@@ -153,7 +152,6 @@ export const useWebRTC = (
       console.log("Connected to Private Cluster: s15607.nyc1");
       if (statusRef.current === 'signaling_offline') setStatus('matching');
       
-      // Notify the channel of our Peer ID
       broadcast({ type: 'presence', peerId: myId, status: 'matching' });
     };
 
@@ -161,40 +159,46 @@ export const useWebRTC = (
       try {
         const msg = JSON.parse(e.data);
         
-        // Handle native PieSocket Presence Events
+        // Native Presence Events
         if (msg.type === 'system:member_joined') {
-          console.log("[YOLO] Signaling: New member joined cluster. Broadcasting identity...");
-          // When someone new joins, we broadcast our presence so they know our PeerJS ID
+          console.log("[YOLO] Signaling: New member joined. Shouting identity...");
           if (statusRef.current === 'matching') {
             broadcast({ type: 'presence', peerId: myId, status: 'matching' });
           }
         }
 
         if (msg.type === 'system:member_left') {
-          if (lockRef.current === msg.uuid) {
-             console.log("[YOLO] Signaling: Current partner left cluster.");
+          if (lockRef.current && (msg.uuid === lockRef.current || lockRef.current.includes(msg.uuid))) {
+             console.log("[YOLO] Signaling: Partner left.");
              skip();
           }
         }
 
-        // Custom Handshake Discovery
+        // Custom Handshake Protocol
         if (msg.peerId && msg.peerId !== myId) {
+          
+          // 1. Discovery phase
           if (msg.type === 'presence' && msg.status === 'matching' && statusRef.current === 'matching') {
-            // Polite Peer Logic: The peer with the lexicographically smaller ID initiates
-            if (myId < msg.peerId) {
+            const isInitiator = msg.peerId > myId;
+            console.log(`[YOLO] Matcher: Found ${msg.peerId}. I am the Initiator: ${isInitiator}`);
+            
+            if (isInitiator) {
               console.log(`[YOLO] Matcher: Proposing P2P to ${msg.peerId}`);
               broadcast({ type: 'match-propose', targetId: msg.peerId, fromId: myId });
             }
           }
 
+          // 2. Proposal phase (Polite Receiver waits for proposal)
           if (msg.type === 'match-propose' && msg.targetId === myId && statusRef.current === 'matching') {
-            console.log(`[YOLO] Matcher: Proposal received from ${msg.fromId}.`);
+            console.log(`[YOLO] Matcher: Proposal received from ${msg.fromId}. Accepting...`);
             setStatus('connecting');
             lockRef.current = msg.fromId;
             broadcast({ type: 'match-accept', targetId: msg.fromId, fromId: myId });
           }
 
-          if (msg.type === 'match-accept' && msg.targetId === myId && statusRef.current === 'matching') {
+          // 3. Acceptance phase (Initiator receives acceptance and calls)
+          if (msg.type === 'match-accept' && msg.targetId === myId && (statusRef.current === 'matching' || statusRef.current === 'connecting')) {
+            console.log(`[YOLO] Matcher: Proposal accepted by ${msg.fromId}. Executing P2P Call.`);
             initiateP2P(msg.fromId, stream);
           }
         }
@@ -229,7 +233,7 @@ export const useWebRTC = (
         }
         setLocalStream(stream);
 
-        // Generate a unique, session-scoped Peer ID
+        // Deterministic ID generation to ensure lexicographical comparison works
         const uniqueId = `yolo_${session.id.substring(0,6)}_${Math.random().toString(36).substring(7)}`;
 
         const peer = new Peer(uniqueId, { 
@@ -248,12 +252,14 @@ export const useWebRTC = (
         });
 
         peer.on('call', (incoming) => {
+          // Polite Peer Rule: Always answer if we were in matching/connecting state
           if (statusRef.current === 'matching' || statusRef.current === 'connecting') {
-            console.log("[YOLO] WebRTC: Accepting incoming call...");
+            console.log("[YOLO] WebRTC: Answered incoming call.");
             setStatus('connecting');
             incoming.answer(stream);
             setupCallHandlers(incoming);
           } else {
+            console.warn("[YOLO] WebRTC: Rejected incoming call (Busy).");
             incoming.close();
           }
         });
