@@ -40,20 +40,11 @@ export const useWebRTC = (
   const { session } = useSession();
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
-  
-  // STATUS MANAGEMENT
   const [status, setStatusState] = useState<WebRTCStatus>('idle');
-  const statusRef = useRef<WebRTCStatus>('idle');
-
-  // Helper to update both State and Ref immediately (Fixes race condition)
-  const updateStatus = useCallback((newStatus: WebRTCStatus) => {
-    statusRef.current = newStatus;
-    setStatusState(newStatus);
-  }, []);
-
   const [isMuted, setIsMuted] = useState(false);
   const [isVideoOff, setIsVideoOff] = useState(false);
   
+  const statusRef = useRef<WebRTCStatus>('idle');
   const peerRef = useRef<Peer | null>(null);
   const callRef = useRef<MediaConnection | null>(null);
   const connRef = useRef<DataConnection | null>(null);
@@ -65,14 +56,17 @@ export const useWebRTC = (
   const lockRef = useRef<string | null>(null); 
   const isClosingRef = useRef(false);
 
-  // 1. CLEANUP UTILS
+  // Helper to keep statusRef in sync with state for use in callbacks
+  const updateStatus = useCallback((newStatus: WebRTCStatus) => {
+    statusRef.current = newStatus;
+    setStatusState(newStatus);
+  }, []);
+
   const stopProposal = useCallback(() => {
     if (proposalIntervalRef.current) {
       clearInterval(proposalIntervalRef.current);
       proposalIntervalRef.current = null;
     }
-    // We do NOT clear handshakeTimeout here immediately, 
-    // because initiateP2P might need its own timeout logic.
   }, []);
 
   const broadcast = useCallback((payload: object) => {
@@ -82,46 +76,49 @@ export const useWebRTC = (
     }
   }, []);
 
-  // 2. SKIP / RESET LOGIC
-  const skip = useCallback((shouldBlacklist: boolean = false) => {
-    console.info(`[YOLO] SKIP: Resetting. Blacklist: ${shouldBlacklist}`);
-    
+  const cleanup = useCallback(() => {
+    lockRef.current = null;
     stopProposal();
     if (handshakeTimeoutRef.current) {
-        clearTimeout(handshakeTimeoutRef.current);
-        handshakeTimeoutRef.current = null;
+      clearTimeout(handshakeTimeoutRef.current);
+      handshakeTimeoutRef.current = null;
     }
+    if (callRef.current) {
+      callRef.current.close();
+      callRef.current = null;
+    }
+    if (connRef.current) {
+      connRef.current.close();
+      connRef.current = null;
+    }
+    setRemoteStream(null);
+  }, [stopProposal]);
 
+  const skip = useCallback((shouldBlacklist: boolean = false) => {
+    console.info(`[YOLO] SKIP: Resetting connection. Blacklist: ${shouldBlacklist}`);
+    
     if (shouldBlacklist && lockRef.current) {
-      blacklistRef.current.add(lockRef.current);
       const target = lockRef.current;
-      // Remove from blacklist after 30s
+      blacklistRef.current.add(target);
       setTimeout(() => blacklistRef.current.delete(target), 30000);
     }
     
-    // Close existing connections
-    if (callRef.current) { callRef.current.close(); callRef.current = null; }
-    if (connRef.current) { connRef.current.close(); connRef.current = null; }
-    
-    setRemoteStream(null);
-    lockRef.current = null;
-    
+    cleanup();
     updateStatus('matching');
     broadcast({ type: 'presence', peerId: peerRef.current?.id, status: 'matching' });
-  }, [updateStatus, broadcast, stopProposal]);
+  }, [cleanup, updateStatus, broadcast]);
 
-  // 3. HANDLERS
   const setupCallHandlers = useCallback((call: MediaConnection) => {
     call.on('stream', (remote) => {
-      console.log("[YOLO] WebRTC: Media stream connected!");
+      console.log("[YOLO] WebRTC: Stream Active.");
       if (handshakeTimeoutRef.current) clearTimeout(handshakeTimeoutRef.current);
       setRemoteStream(remote);
       updateStatus('connected');
     });
     call.on('close', () => skip(false));
     call.on('error', (e) => {
-        console.error("Call Error:", e);
-        skip(true);
+      console.error("[YOLO] Call Error:", e);
+      skip(true);
     });
     callRef.current = call;
   }, [skip, updateStatus]);
@@ -136,42 +133,37 @@ export const useWebRTC = (
     connRef.current = conn;
   }, [skip, onMessageReceived, onReactionReceived]);
 
-  // 4. INITIATE P2P (Caller Side)
   const initiateP2P = useCallback((remoteId: string, stream: MediaStream) => {
     if (statusRef.current === 'connected') return;
     
-    console.log(`[YOLO] Handshake: Initiating Call to ${remoteId}`);
+    console.log(`[YOLO] Handshake: Calling ${remoteId}`);
     updateStatus('connecting');
     lockRef.current = remoteId;
-    stopProposal(); // Stop sending proposals
+    stopProposal(); 
 
-    // Small delay to ensure signaling is settled
+    // Safety timeout to ensure signaling state is consistent across both peers
     setTimeout(() => {
-        if (!peerRef.current || peerRef.current.destroyed) return;
-        
-        try {
-            const call = peerRef.current.call(remoteId, stream);
-            const conn = peerRef.current.connect(remoteId, { reliable: true });
-    
-            if (call) setupCallHandlers(call);
-            if (conn) setupDataHandlers(conn);
-        } catch (err) {
-            console.error("P2P Init Error:", err);
-            skip(true);
-        }
-    }, 100);
+      if (!peerRef.current || peerRef.current.destroyed) return;
+      
+      try {
+        const call = peerRef.current.call(remoteId, stream);
+        const conn = peerRef.current.connect(remoteId, { reliable: true });
+        if (call) setupCallHandlers(call);
+        if (conn) setupDataHandlers(conn);
+      } catch (err) {
+        skip(true);
+      }
+    }, 150);
 
-    // Fail-safe: If connection doesn't stabilize in 6s, abort
     if (handshakeTimeoutRef.current) clearTimeout(handshakeTimeoutRef.current);
     handshakeTimeoutRef.current = setTimeout(() => {
       if (statusRef.current === 'connecting') {
-        console.warn("[YOLO] P2P Timeout: Connection stuck. Resetting.");
+        console.warn("[YOLO] Handshake Timeout.");
         skip(true);
       }
-    }, 6000);
+    }, 8000);
   }, [setupCallHandlers, setupDataHandlers, skip, stopProposal, updateStatus]);
 
-  // 5. SIGNALING LOGIC
   const connectSignaling = useCallback((myId: string, stream: MediaStream) => {
     if (isClosingRef.current) return;
 
@@ -182,7 +174,7 @@ export const useWebRTC = (
     wsRef.current = ws;
     
     ws.onopen = () => {
-      console.log("Signaling Connected");
+      console.log("Connected to Private Cluster: s15607.nyc1");
       if (['signaling_offline', 'generating_id', 'idle'].includes(statusRef.current)) {
         updateStatus('matching');
       }
@@ -193,9 +185,7 @@ export const useWebRTC = (
       try {
         const msg = JSON.parse(e.data);
         
-        // System Events
         if (msg.type === 'system:member_joined' && statusRef.current === 'matching') {
-          // Re-announce our presence so the new member sees us
           broadcast({ type: 'presence', peerId: myId, status: 'matching' });
         }
 
@@ -205,62 +195,45 @@ export const useWebRTC = (
           }
         }
 
-        // Peer Logic
         if (msg.peerId && msg.peerId !== myId) {
           if (blacklistRef.current.has(msg.peerId)) return;
 
-          // A. MATCHING: Deciding who calls who
           if (msg.type === 'presence' && msg.status === 'matching' && statusRef.current === 'matching') {
-            // Strict tie-breaker: Only the ID strictly "greater" initiates
             const isInitiator = msg.peerId > myId; 
             
             if (isInitiator) {
-              console.log(`[YOLO] Match found: ${msg.peerId}. I am Initiator.`);
               lockRef.current = msg.peerId;
               
-              // Start Proposal Loop
               const attemptProposal = () => {
                 if (statusRef.current !== 'matching' && statusRef.current !== 'connecting') {
                     stopProposal();
                     return;
                 }
-                console.log(`[YOLO] Sending Proposal -> ${msg.peerId}`);
+                console.log(`[YOLO] Proposing to ghost/peer: ${msg.peerId}`);
                 broadcast({ type: 'match-propose', targetId: msg.peerId, fromId: myId });
               };
               
-              stopProposal(); // Clear any old loops
-              attemptProposal(); // Send first immediately
+              stopProposal();
+              attemptProposal();
               proposalIntervalRef.current = setInterval(attemptProposal, 1500);
 
-              // 5s Timeout to abort if they don't answer
               if (handshakeTimeoutRef.current) clearTimeout(handshakeTimeoutRef.current);
               handshakeTimeoutRef.current = setTimeout(() => {
                 if (statusRef.current === 'matching' && lockRef.current === msg.peerId) {
-                  console.warn("[YOLO] Matcher Timeout: No answer. Skipping.");
                   skip(true);
                 }
               }, 5000);
             }
           }
 
-          // B. RECEIVING PROPOSAL
-          if (msg.type === 'match-propose' && msg.targetId === myId) {
-             // Only accept if we are actually looking for a match
-             if (statusRef.current === 'matching') {
-                console.log(`[YOLO] Proposal received from ${msg.fromId}. Accepting.`);
-                updateStatus('connecting');
-                lockRef.current = msg.fromId;
-                broadcast({ type: 'match-accept', targetId: msg.fromId, fromId: myId });
-             }
+          if (msg.type === 'match-propose' && msg.targetId === myId && statusRef.current === 'matching') {
+            updateStatus('connecting');
+            lockRef.current = msg.fromId;
+            broadcast({ type: 'match-accept', targetId: msg.fromId, fromId: myId });
           }
 
-          // C. PROPOSAL ACCEPTED
-          if (msg.type === 'match-accept' && msg.targetId === myId) {
-            // We must be in 'matching' or 'connecting' (if we set it earlier)
-            if (statusRef.current === 'matching' || statusRef.current === 'connecting') {
-                console.log(`[YOLO] Proposal Accepted by ${msg.fromId}. Starting P2P.`);
-                initiateP2P(msg.fromId, stream);
-            }
+          if (msg.type === 'match-accept' && msg.targetId === myId && (statusRef.current === 'matching' || statusRef.current === 'connecting')) {
+            initiateP2P(msg.fromId, stream);
           }
         }
       } catch (err) {}
@@ -275,7 +248,6 @@ export const useWebRTC = (
     ws.onerror = () => ws.close();
   }, [region, broadcast, initiateP2P, skip, stopProposal, updateStatus]);
 
-  // 6. INITIALIZATION
   useEffect(() => {
     let mounted = true;
     const init = async () => {
@@ -292,16 +264,14 @@ export const useWebRTC = (
         setLocalStream(stream);
 
         const uniqueId = `yolo_${session.id.substring(0,6)}_${Math.random().toString(36).substring(7)}`;
-        const peer = new Peer(uniqueId, { debug: 1, config: ICE_CONFIG });
+        const peer = new Peer(uniqueId, { debug: 1, config: ICE_CONFIG, secure: true });
         peerRef.current = peer;
 
         peer.on('open', (id) => {
           if (mounted) connectSignaling(id, stream);
         });
 
-        // ANSWERER SIDE LOGIC
         peer.on('call', (incoming) => {
-            console.log("[YOLO] WebRTC: Receiving Incoming Call...");
             stopProposal(); 
             updateStatus('connecting');
             incoming.answer(stream);
@@ -309,18 +279,15 @@ export const useWebRTC = (
         });
 
         peer.on('connection', (conn) => {
-          console.log("[YOLO] WebRTC: Data Connection Established.");
           setupDataHandlers(conn);
         });
 
         peer.on('error', (err) => {
-          console.error("PeerJS Error:", err.type);
           if (['peer-unavailable', 'network', 'webrtc'].includes(err.type)) {
             skip(true);
           }
         });
       } catch (err) {
-        console.error("Init Error:", err);
         if (mounted) updateStatus('error');
       }
     };
@@ -330,15 +297,13 @@ export const useWebRTC = (
     return () => {
       mounted = false;
       isClosingRef.current = true;
-      cleanup(); // Use your cleanup function
+      cleanup();
       if (peerRef.current) peerRef.current.destroy();
       if (wsRef.current) wsRef.current.close();
       if (localStream) localStream.getTracks().forEach(t => t.stop());
     };
-  // eslint-disable-next-line
-  }, [session?.id]); // Minimal dependencies for init
+  }, [session?.id, cleanup, connectSignaling, setupCallHandlers, setupDataHandlers, skip, stopProposal, updateStatus]);
 
-  // Expose controls
   return {
     localStream, 
     remoteStream, 
@@ -348,7 +313,23 @@ export const useWebRTC = (
     skip: () => skip(false), 
     isMuted, 
     isVideoOff, 
-    toggleMute: () => { /* ... toggle logic ... */ },
-    toggleVideo: () => { /* ... toggle logic ... */ }
+    toggleMute: () => {
+      if (localStream) {
+        const track = localStream.getAudioTracks()[0];
+        if (track) {
+          track.enabled = isMuted; // Set to the NEW state (if it was muted, enable it)
+          setIsMuted(!isMuted);
+        }
+      }
+    },
+    toggleVideo: () => {
+      if (localStream) {
+        const track = localStream.getVideoTracks()[0];
+        if (track) {
+          track.enabled = isVideoOff; // Toggle track based on current state
+          setIsVideoOff(!isVideoOff);
+        }
+      }
+    }
   };
 };
