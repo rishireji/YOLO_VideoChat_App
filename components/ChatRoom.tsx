@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useCallback } from 'react';
 import { AppState, ChatMessage, REGION_LABELS, ReactionType, REACTION_EMOJIS } from '../types';
 import { VideoFeed } from './VideoFeed';
@@ -106,7 +105,6 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ onExit }) => {
         setAppState(AppState.DISCONNECTED);
         break;
       case 'error':
-        // Stay in matchmaking but the overlay handles the error display
         setAppState(AppState.MATCHMAKING);
         break;
     }
@@ -135,6 +133,17 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ onExit }) => {
   return (
     <div className="flex flex-col lg:flex-row h-screen w-full bg-black overflow-hidden relative">
       <ReportModal isOpen={isReportModalOpen} onClose={() => setIsReportModalOpen(false)} onSubmit={() => skip()} />
+
+      {/* Persistent Global Exit Button */}
+      <button 
+        onClick={onExit}
+        className="fixed top-6 right-6 z-[100] flex items-center gap-2 px-5 py-2.5 bg-zinc-900/60 hover:bg-red-600/30 border border-white/10 rounded-full text-zinc-300 hover:text-white transition-all active:scale-95 group shadow-2xl backdrop-blur-xl"
+      >
+        <svg className="w-4 h-4 transition-transform group-hover:-translate-x-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M10 19l-7-7m0 0l7-7m-7 7h18"/>
+        </svg>
+        <span className="text-[10px] font-bold uppercase tracking-[0.3em]">Exit</span>
+      </button>
 
       <div className="flex-1 flex flex-col relative h-[50vh] lg:h-full">
         <div className="flex-1 flex flex-col gap-3 p-3 h-full">
