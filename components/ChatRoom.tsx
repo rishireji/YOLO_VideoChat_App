@@ -29,6 +29,7 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ onExit }) => {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isReportModalOpen, setIsReportModalOpen] = useState(false);
   const [activeReactions, setActiveReactions] = useState<FloatingReaction[]>([]);
+  const [isUserActive, setIsUserActive] = useState(true);
 
   const handleReactionReceived = useCallback((type: ReactionType) => {
     const id = Math.random().toString(36).substring(7);
@@ -84,6 +85,52 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ onExit }) => {
 
   useModeration(localStream);
 
+  // Keyboard Shortcuts
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Don't trigger shortcuts if user is typing in a text field
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+
+      switch(e.code) {
+        case 'Space':
+          e.preventDefault();
+          skip();
+          break;
+        case 'Escape':
+          e.preventDefault();
+          onExit();
+          break;
+        case 'KeyM':
+          toggleMute();
+          break;
+        case 'KeyV':
+          toggleVideo();
+          break;
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [skip, onExit, toggleMute, toggleVideo]);
+
+  // Activity detection to hide/show UI
+  useEffect(() => {
+    let timeout: number;
+    const handleActivity = () => {
+      setIsUserActive(true);
+      clearTimeout(timeout);
+      timeout = window.setTimeout(() => setIsUserActive(false), 3000);
+    };
+
+    window.addEventListener('mousemove', handleActivity);
+    window.addEventListener('touchstart', handleActivity);
+    return () => {
+      window.removeEventListener('mousemove', handleActivity);
+      window.removeEventListener('touchstart', handleActivity);
+      clearTimeout(timeout);
+    };
+  }, []);
+
   useEffect(() => {
     switch (status) {
       case 'matching':
@@ -131,69 +178,60 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ onExit }) => {
   };
 
   return (
-    <div className="flex flex-col lg:flex-row h-screen w-full bg-black overflow-hidden relative">
+    <div className="flex flex-col lg:flex-row h-screen w-full bg-zinc-950 overflow-hidden relative font-inter">
       <ReportModal isOpen={isReportModalOpen} onClose={() => setIsReportModalOpen(false)} onSubmit={() => skip()} />
 
-      {/* Persistent Global Exit Button */}
-      <button 
-        onClick={onExit}
-        className="fixed top-6 right-6 z-[100] flex items-center gap-2 px-5 py-2.5 bg-zinc-900/60 hover:bg-red-600/30 border border-white/10 rounded-full text-zinc-300 hover:text-white transition-all active:scale-95 group shadow-2xl backdrop-blur-xl"
-      >
-        <svg className="w-4 h-4 transition-transform group-hover:-translate-x-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M10 19l-7-7m0 0l7-7m-7 7h18"/>
-        </svg>
-        <span className="text-[10px] font-bold uppercase tracking-[0.3em]">Exit</span>
-      </button>
+      {/* Main Video Area */}
+      <div className="flex-1 flex flex-col relative h-[50vh] lg:h-full p-2 md:p-6 lg:p-8">
+        <div className={`flex-1 relative rounded-[40px] md:rounded-[56px] overflow-hidden bg-black border border-white/5 shadow-[0_0_100px_rgba(0,0,0,0.5)] transition-all duration-700 ${appState === AppState.CONNECTED ? 'scale-100' : 'scale-[0.98]'}`}>
+          {appState === AppState.MATCHMAKING && (
+            <MatchmakingOverlay 
+              regionName={REGION_LABELS[session?.region || 'global']} 
+              status={status}
+            />
+          )}
+          
+          <VideoFeed stream={remoteStream} isRemote label="Stranger" />
 
-      <div className="flex-1 flex flex-col relative h-[50vh] lg:h-full">
-        <div className="flex-1 flex flex-col gap-3 p-3 h-full">
-          <div className="flex-1 relative rounded-[32px] md:rounded-[40px] overflow-hidden bg-zinc-900 border border-white/5 shadow-2xl">
-            {appState === AppState.MATCHMAKING && (
-              <MatchmakingOverlay 
-                regionName={REGION_LABELS[session?.region || 'global']} 
-                onCancel={onExit}
-                status={status}
-              />
-            )}
-            
-            <VideoFeed stream={remoteStream} isRemote label="Stranger" />
-
-            <div className="absolute inset-0 pointer-events-none overflow-hidden z-20">
-              {activeReactions.filter(r => !r.isLocal).map(reaction => (
-                <div key={reaction.id} className="absolute bottom-0 text-5xl md:text-8xl animate-[floatUpEnhanced_2.5s_ease-out_forwards]" style={{ left: `${reaction.x}%`, '--rotation': `${reaction.rotation}deg` } as any}>
+          {/* Incoming Reactions Overlay */}
+          <div className="absolute inset-0 pointer-events-none overflow-hidden z-20">
+            {activeReactions.filter(r => !r.isLocal).map(reaction => (
+              <div key={reaction.id} className="absolute bottom-0 text-5xl md:text-8xl animate-[floatUpEnhanced_2.5s_ease-out_forwards]" style={{ left: `${reaction.x}%`, '--rotation': `${reaction.rotation}deg` } as any}>
+                {REACTION_EMOJIS[reaction.type]}
+              </div>
+            ))}
+          </div>
+          
+          {/* Local PiP (Picture in Picture) */}
+          <div className="absolute top-6 left-6 w-32 md:w-56 aspect-video bg-zinc-950 rounded-2xl md:rounded-[32px] overflow-hidden shadow-2xl border border-white/10 z-30 group/pip transition-all hover:scale-105 active:scale-95 cursor-move">
+            <VideoFeed stream={localStream} isRemote={false} label="You" isMuted={true} />
+            <div className="absolute inset-0 pointer-events-none overflow-hidden z-10">
+              {activeReactions.filter(r => r.isLocal).map(reaction => (
+                <div key={reaction.id} className="absolute bottom-0 text-2xl md:text-4xl animate-[floatUpEnhanced_2.5s_ease-out_forwards]" style={{ left: `${reaction.x}%`, '--rotation': `${reaction.rotation}deg` } as any}>
                   {REACTION_EMOJIS[reaction.type]}
                 </div>
               ))}
             </div>
-            
-            <div className="absolute bottom-4 left-4 w-32 md:w-64 aspect-video bg-zinc-950 rounded-2xl md:rounded-3xl overflow-hidden shadow-2xl border border-white/10 z-30 group cursor-pointer">
-              <VideoFeed stream={localStream} isRemote={false} label="You" isMuted={true} />
-              <div className="absolute inset-0 pointer-events-none overflow-hidden z-10">
-                {activeReactions.filter(r => r.isLocal).map(reaction => (
-                  <div key={reaction.id} className="absolute bottom-0 text-3xl md:text-5xl animate-[floatUpEnhanced_2.5s_ease-out_forwards]" style={{ left: `${reaction.x}%`, '--rotation': `${reaction.rotation}deg` } as any}>
-                    {REACTION_EMOJIS[reaction.type]}
-                  </div>
-                ))}
-              </div>
-            </div>
           </div>
-        </div>
 
-        <div className="px-4 pb-4 md:px-6 md:pb-6 bg-black">
-          <Controls 
-            appState={appState} 
-            onNext={skip} 
-            onExit={onExit}
-            isMuted={isMuted}
-            isVideoOff={isVideoOff}
-            onToggleMute={toggleMute}
-            onToggleVideo={toggleVideo}
-            onReport={() => setIsReportModalOpen(true)}
-            onSendReaction={handleSendReaction}
-          />
+          {/* Floating Action Cockpit (The Controls) */}
+          <div className={`absolute bottom-8 left-1/2 -translate-x-1/2 z-50 transition-all duration-500 ${isUserActive || appState === AppState.MATCHMAKING ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4 pointer-events-none'}`}>
+            <Controls 
+              appState={appState} 
+              onNext={skip} 
+              onExit={onExit}
+              isMuted={isMuted}
+              isVideoOff={isVideoOff}
+              onToggleMute={toggleMute}
+              onToggleVideo={toggleVideo}
+              onReport={() => setIsReportModalOpen(true)}
+              onSendReaction={handleSendReaction}
+            />
+          </div>
         </div>
       </div>
 
+      {/* Sidebar - Remains persistent as requested */}
       <Sidebar 
         messages={messages} 
         onSendMessage={handleSendMessage} 
