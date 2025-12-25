@@ -44,7 +44,6 @@ export const useWebRTC = (
   const [isMuted, setIsMuted] = useState(false);
   const [isVideoOff, setIsVideoOff] = useState(false);
   
-  const statusRef = useRef<WebRTCStatus>('idle');
   const peerRef = useRef<Peer | null>(null);
   const callRef = useRef<MediaConnection | null>(null);
   const connRef = useRef<DataConnection | null>(null);
@@ -56,17 +55,8 @@ export const useWebRTC = (
   const lockRef = useRef<string | null>(null); 
   const isClosingRef = useRef(false);
 
-  // Helper to keep statusRef in sync with state for use in callbacks
   const updateStatus = useCallback((newStatus: WebRTCStatus) => {
-    statusRef.current = newStatus;
     setStatusState(newStatus);
-  }, []);
-
-  const stopProposal = useCallback(() => {
-    if (proposalIntervalRef.current) {
-      clearInterval(proposalIntervalRef.current);
-      proposalIntervalRef.current = null;
-    }
   }, []);
 
   const broadcast = useCallback((payload: object) => {
@@ -76,33 +66,32 @@ export const useWebRTC = (
     }
   }, []);
 
-  const cleanup = useCallback(() => {
-    lockRef.current = null;
-    stopProposal();
+  const stopProposal = useCallback(() => {
+    if (proposalIntervalRef.current) {
+      clearInterval(proposalIntervalRef.current);
+      proposalIntervalRef.current = null;
+    }
     if (handshakeTimeoutRef.current) {
       clearTimeout(handshakeTimeoutRef.current);
       handshakeTimeoutRef.current = null;
     }
-    if (callRef.current) {
-      callRef.current.close();
-      callRef.current = null;
-    }
-    if (connRef.current) {
-      connRef.current.close();
-      connRef.current = null;
-    }
+  }, []);
+
+  const cleanup = useCallback(() => {
+    console.log("[YOLO] Cleanup: Releasing locks and closing connections.");
+    lockRef.current = null;
+    stopProposal();
+    if (callRef.current) { callRef.current.close(); callRef.current = null; }
+    if (connRef.current) { connRef.current.close(); connRef.current = null; }
     setRemoteStream(null);
   }, [stopProposal]);
 
   const skip = useCallback((shouldBlacklist: boolean = false) => {
-    console.info(`[YOLO] SKIP: Resetting connection. Blacklist: ${shouldBlacklist}`);
-    
     if (shouldBlacklist && lockRef.current) {
       const target = lockRef.current;
       blacklistRef.current.add(target);
       setTimeout(() => blacklistRef.current.delete(target), 30000);
     }
-    
     cleanup();
     updateStatus('matching');
     broadcast({ type: 'presence', peerId: peerRef.current?.id, status: 'matching' });
@@ -110,18 +99,15 @@ export const useWebRTC = (
 
   const setupCallHandlers = useCallback((call: MediaConnection) => {
     call.on('stream', (remote) => {
-      console.log("[YOLO] WebRTC: Stream Active.");
-      if (handshakeTimeoutRef.current) clearTimeout(handshakeTimeoutRef.current);
+      console.log("[YOLO] WebRTC: Stream Established.");
+      stopProposal(); 
       setRemoteStream(remote);
       updateStatus('connected');
     });
     call.on('close', () => skip(false));
-    call.on('error', (e) => {
-      console.error("[YOLO] Call Error:", e);
-      skip(true);
-    });
+    call.on('error', () => skip(true));
     callRef.current = call;
-  }, [skip, updateStatus]);
+  }, [skip, stopProposal, updateStatus]);
 
   const setupDataHandlers = useCallback((conn: DataConnection) => {
     conn.on('data', (data: any) => {
@@ -134,35 +120,23 @@ export const useWebRTC = (
   }, [skip, onMessageReceived, onReactionReceived]);
 
   const initiateP2P = useCallback((remoteId: string, stream: MediaStream) => {
-    if (statusRef.current === 'connected') return;
-    
-    console.log(`[YOLO] Handshake: Calling ${remoteId}`);
+    console.log(`[YOLO] P2P: Initiating PeerJS Call to ${remoteId}`);
     updateStatus('connecting');
-    lockRef.current = remoteId;
-    stopProposal(); 
-
-    // Safety timeout to ensure signaling state is consistent across both peers
+    
+    // Slight delay to ensure Receiver's PeerJS is ready for the incoming call
     setTimeout(() => {
       if (!peerRef.current || peerRef.current.destroyed) return;
-      
       try {
         const call = peerRef.current.call(remoteId, stream);
         const conn = peerRef.current.connect(remoteId, { reliable: true });
         if (call) setupCallHandlers(call);
         if (conn) setupDataHandlers(conn);
       } catch (err) {
+        console.error("[YOLO] PeerJS Call Failed:", err);
         skip(true);
       }
-    }, 150);
-
-    if (handshakeTimeoutRef.current) clearTimeout(handshakeTimeoutRef.current);
-    handshakeTimeoutRef.current = setTimeout(() => {
-      if (statusRef.current === 'connecting') {
-        console.warn("[YOLO] Handshake Timeout.");
-        skip(true);
-      }
-    }, 8000);
-  }, [setupCallHandlers, setupDataHandlers, skip, stopProposal, updateStatus]);
+    }, 200);
+  }, [setupCallHandlers, setupDataHandlers, skip, updateStatus]);
 
   const connectSignaling = useCallback((myId: string, stream: MediaStream) => {
     if (isClosingRef.current) return;
@@ -174,10 +148,8 @@ export const useWebRTC = (
     wsRef.current = ws;
     
     ws.onopen = () => {
-      console.log("Connected to Private Cluster: s15607.nyc1");
-      if (['signaling_offline', 'generating_id', 'idle'].includes(statusRef.current)) {
-        updateStatus('matching');
-      }
+      console.log("[YOLO] Signaling: Online.");
+      updateStatus('matching');
       broadcast({ type: 'presence', peerId: myId, status: 'matching' });
     };
 
@@ -185,58 +157,73 @@ export const useWebRTC = (
       try {
         const msg = JSON.parse(e.data);
         
-        if (msg.type === 'system:member_joined' && statusRef.current === 'matching') {
-          broadcast({ type: 'presence', peerId: myId, status: 'matching' });
-        }
-
-        if (msg.type === 'system:member_left') {
-          if (lockRef.current && (msg.uuid === lockRef.current || lockRef.current.includes(msg.uuid))) {
-             skip(false);
-          }
-        }
-
-        if (msg.peerId && msg.peerId !== myId) {
-          if (blacklistRef.current.has(msg.peerId)) return;
-
-          if (msg.type === 'presence' && msg.status === 'matching' && statusRef.current === 'matching') {
-            const isInitiator = msg.peerId > myId; 
+        // 1. Presence Received: If we are free, try to propose to the new peer
+        if (msg.type === 'presence' && msg.peerId !== myId) {
+          if (!lockRef.current && !blacklistRef.current.has(msg.peerId)) {
+            console.log(`[YOLO] Matcher: New peer ${msg.peerId} detected. Locking and Proposing.`);
+            lockRef.current = msg.peerId;
             
-            if (isInitiator) {
-              lockRef.current = msg.peerId;
-              
-              const attemptProposal = () => {
-                if (statusRef.current !== 'matching' && statusRef.current !== 'connecting') {
-                    stopProposal();
-                    return;
-                }
-                console.log(`[YOLO] Proposing to ghost/peer: ${msg.peerId}`);
-                broadcast({ type: 'match-propose', targetId: msg.peerId, fromId: myId });
-              };
-              
-              stopProposal();
-              attemptProposal();
-              proposalIntervalRef.current = setInterval(attemptProposal, 1500);
+            const attemptProposal = () => {
+              // Only keep proposing if we haven't successfully connected yet
+              console.log(`[YOLO] Propose -> ${msg.peerId}`);
+              broadcast({ type: 'match-propose', targetId: msg.peerId, fromId: myId });
+            };
+            
+            stopProposal();
+            attemptProposal();
+            proposalIntervalRef.current = setInterval(attemptProposal, 1500);
 
-              if (handshakeTimeoutRef.current) clearTimeout(handshakeTimeoutRef.current);
-              handshakeTimeoutRef.current = setTimeout(() => {
-                if (statusRef.current === 'matching' && lockRef.current === msg.peerId) {
-                  skip(true);
-                }
-              }, 5000);
-            }
+            // Timeout if they never accept
+            handshakeTimeoutRef.current = setTimeout(() => {
+              if (lockRef.current === msg.peerId) {
+                console.warn("[YOLO] Matcher: Proposal Timeout. Skipping ghost.");
+                skip(true);
+              }
+            }, 6000);
           }
+        }
 
-          if (msg.type === 'match-propose' && msg.targetId === myId && statusRef.current === 'matching') {
-            updateStatus('connecting');
-            lockRef.current = msg.fromId;
-            broadcast({ type: 'match-accept', targetId: msg.fromId, fromId: myId });
-          }
+        // 2. Proposal Received: If we are targeted and free, accept immediately
+        if (msg.type === 'match-propose' && msg.targetId === myId) {
+  // If we are free → accept
+  if (!lockRef.current) {
+    lockRef.current = msg.fromId;
+    stopProposal();
+    updateStatus('connecting');
+    broadcast({ type: 'match-accept', targetId: msg.fromId, fromId: myId });
+  }
 
-          if (msg.type === 'match-accept' && msg.targetId === myId && (statusRef.current === 'matching' || statusRef.current === 'connecting')) {
+  // GLARE RESOLUTION: if both proposed, accept the lexicographically smaller ID
+  else if (lockRef.current === msg.fromId) {
+    // already locked on this peer, ignore
+  }
+}
+
+        // 3. Acceptance Received: If it matches our lock, stop proposals and start WebRTC
+        if (msg.type === 'match-accept' && msg.targetId === myId) {
+          if (lockRef.current === msg.fromId) {
+            console.log(`[YOLO] Matcher: Acceptance from ${msg.fromId} received. Initiating P2P.`);
+            stopProposal();
             initiateP2P(msg.fromId, stream);
           }
         }
-      } catch (err) {}
+
+        // Handle native leave events
+       // Handle native leave events (PieSocket system events)
+if (msg.event === 'system:member_left') {
+  console.log('[YOLO] system:member_left received');
+
+  // If we were matched or attempting to match, reset safely
+  if (lockRef.current) {
+    console.log('[YOLO] Active partner left. Cleaning up.');
+    skip(false);
+  }
+}
+
+
+      } catch (err) {
+        console.error("[YOLO] Signaling Message Error:", err);
+      }
     };
 
     ws.onclose = () => {
@@ -272,14 +259,23 @@ export const useWebRTC = (
         });
 
         peer.on('call', (incoming) => {
+          // If we are locked on this sender (we sent an acceptance or we are in a glare state)
+          if (lockRef.current && incoming.peer === lockRef.current) {
+            console.log("[YOLO] WebRTC: Answering incoming PeerJS call.");
             stopProposal(); 
             updateStatus('connecting');
             incoming.answer(stream);
             setupCallHandlers(incoming);
+          } else {
+            console.warn("[YOLO] WebRTC: Rejected call from unauthorized peer.");
+            incoming.close();
+          }
         });
 
         peer.on('connection', (conn) => {
-          setupDataHandlers(conn);
+          if (lockRef.current && conn.peer === lockRef.current) {
+            setupDataHandlers(conn);
+          }
         });
 
         peer.on('error', (err) => {
@@ -317,7 +313,7 @@ export const useWebRTC = (
       if (localStream) {
         const track = localStream.getAudioTracks()[0];
         if (track) {
-          track.enabled = isMuted; // Set to the NEW state (if it was muted, enable it)
+          track.enabled = isMuted;
           setIsMuted(!isMuted);
         }
       }
@@ -326,7 +322,7 @@ export const useWebRTC = (
       if (localStream) {
         const track = localStream.getVideoTracks()[0];
         if (track) {
-          track.enabled = isVideoOff; // Toggle track based on current state
+          track.enabled = isVideoOff;
           setIsVideoOff(!isVideoOff);
         }
       }
