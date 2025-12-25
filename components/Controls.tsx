@@ -39,21 +39,22 @@ export const Controls: React.FC<ControlsProps> = ({
       )}
 
       <div className="flex items-center justify-between gap-4">
+        {/* Left Side: Media Controls */}
         <div className="flex gap-2.5">
           <button
             onClick={onToggleMute}
-            className={`p-3.5 rounded-2xl transition-all active:scale-90 shadow-lg ${isMuted ? 'bg-red-600 text-white' : 'bg-zinc-800 hover:bg-zinc-700 text-white'}`}
-            title={isMuted ? "Unmute" : "Mute"}
+            className={`p-3.5 rounded-2xl transition-all active:scale-90 shadow-lg border border-white/5 ${isMuted ? 'bg-red-600 text-white' : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-white'}`}
+            title={isMuted ? "Unmute Microphone" : "Mute Microphone"}
           >
             {isMuted ? (
-              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2" /></svg>
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 3l18 18" /></svg>
             ) : (
-              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" /></svg>
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" /></svg>
             )}
           </button>
           <button
             onClick={onToggleVideo}
-            className={`p-3.5 rounded-2xl transition-all active:scale-90 shadow-lg ${isVideoOff ? 'bg-red-600 text-white' : 'bg-zinc-800 hover:bg-zinc-700 text-white'}`}
+            className={`p-3.5 rounded-2xl transition-all active:scale-90 shadow-lg border border-white/5 ${isVideoOff ? 'bg-red-600 text-white' : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-white'}`}
             title={isVideoOff ? "Start Camera" : "Stop Camera"}
           >
             {isVideoOff ? (
@@ -64,19 +65,23 @@ export const Controls: React.FC<ControlsProps> = ({
           </button>
         </div>
 
-        <div className="flex gap-4">
+        {/* Center/Right Side: Main Actions */}
+        <div className="flex gap-4 flex-1 justify-end">
           <button
             onClick={onExit}
-            className="px-6 py-3.5 rounded-2xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-bold transition-all active:scale-95"
+            className="px-8 py-3.5 rounded-2xl bg-red-600 hover:bg-red-500 text-white font-black uppercase tracking-widest transition-all transform active:scale-95 shadow-[0_0_20px_rgba(220,38,38,0.3)] flex items-center gap-2 group"
           >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/></svg>
             Exit
           </button>
+          
           <button
             onClick={onNext}
-            className={`px-12 py-3.5 rounded-2xl font-bold transition-all transform active:scale-95 flex items-center gap-2 group ${
+            disabled={isMatching}
+            className={`px-12 py-3.5 rounded-2xl font-black uppercase tracking-widest transition-all transform active:scale-95 flex items-center gap-2 group ${
               isMatching 
-                ? 'bg-zinc-800 text-zinc-600 cursor-not-allowed' 
-                : 'bg-red-600 hover:bg-red-500 text-white shadow-[0_0_20px_rgba(220,38,38,0.4)]'
+                ? 'bg-zinc-800 text-zinc-600 cursor-not-allowed border border-zinc-700' 
+                : 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-[0_0_20px_rgba(79,70,229,0.4)]'
             }`}
           >
             {isMatching ? (
@@ -84,16 +89,17 @@ export const Controls: React.FC<ControlsProps> = ({
             ) : (
               <>
                 Next Room
-                <svg className="w-5 h-5 group-hover:translate-x-1 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 5l7 7-7 7M5 5l7 7-7 7"/></svg>
+                <svg className="w-5 h-5 group-hover:translate-x-1 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M13 5l7 7-7 7M5 5l7 7-7 7"/></svg>
               </>
             )}
           </button>
         </div>
 
+        {/* Report Button */}
         <button 
           onClick={onReport}
-          className="p-3.5 rounded-2xl bg-red-500/10 text-red-500 hover:bg-red-500/20 transition-all group shadow-inner" 
-          title="Report Stranger"
+          className="p-3.5 rounded-2xl bg-zinc-900 border border-zinc-800 text-red-500 hover:bg-red-500/10 transition-all group shadow-inner" 
+          title="Report Abuse"
         >
           <svg className="w-6 h-6 group-hover:rotate-12 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
         </button>
