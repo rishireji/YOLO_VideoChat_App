@@ -93,6 +93,42 @@
         .glitch-text:hover {
           animation: glitch 0.2s infinite;
         }
+
+        /* NEW CYBER ANIMATIONS */
+        @keyframes radar-sweep {
+          from { transform: rotate(0deg); }
+          to { transform: rotate(360deg); }
+        }
+        .animate-radar {
+          animation: radar-sweep 8s linear infinite;
+        }
+
+        @keyframes grid-drift {
+          0% { background-position: 0 0; }
+          100% { background-position: 100px 100px; }
+        }
+        .animate-grid {
+          animation: grid-drift 20s linear infinite;
+        }
+
+        @keyframes pulse-fast {
+          0%, 100% { opacity: 0.1; }
+          50% { opacity: 0.4; }
+        }
+        .animate-pulse-fast {
+          animation: pulse-fast 2s ease-in-out infinite;
+        }
+
+        @keyframes reticle-snap {
+          0%, 100% { transform: translate(0, 0) scale(1); opacity: 0; }
+          10%, 90% { opacity: 0.6; }
+          50% { transform: translate(var(--tw-translate-x), var(--tw-translate-y)) scale(1.1); opacity: 1; }
+        }
+        
+        .perspective-grid {
+          perspective: 1000px;
+          transform-style: preserve-3d;
+        }
     </style>
 <script type="importmap">
 {

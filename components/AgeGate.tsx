@@ -1,5 +1,6 @@
 
 import React, { useState } from 'react';
+import { Brand } from './Brand';
 
 interface AgeGateProps {
   onVerify: (isOfAge: boolean) => void;
@@ -34,12 +35,8 @@ export const AgeGate: React.FC<AgeGateProps> = ({ onVerify }) => {
         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-red-900 rounded-full blur-[160px]"></div>
       </div>
 
-      <div className="relative z-10 w-full max-w-lg bg-zinc-950 border border-zinc-800 p-8 md:p-12 rounded-[40px] shadow-2xl text-center">
-        <div className="w-20 h-20 bg-red-600/10 rounded-3xl flex items-center justify-center mx-auto mb-8 border border-red-500/20">
-          <svg className="w-10 h-10 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-          </svg>
-        </div>
+      <div className="relative z-10 w-full max-w-lg bg-zinc-950 border border-zinc-800 p-8 md:p-12 rounded-[40px] shadow-2xl text-center flex flex-col items-center">
+        <Brand size="lg" className="mb-8" />
 
         <h1 className="text-3xl md:text-4xl font-outfit font-bold text-white mb-4 tracking-tight">Age Verification</h1>
         <p className="text-zinc-400 text-sm md:text-base mb-8 leading-relaxed">
@@ -47,7 +44,7 @@ export const AgeGate: React.FC<AgeGateProps> = ({ onVerify }) => {
           By entering, you certify that you are at least <span className="text-red-500 font-bold">18 years of age</span>.
         </p>
 
-        <form onSubmit={handleVerify} className="space-y-6">
+        <form onSubmit={handleVerify} className="space-y-6 w-full">
           <div className="space-y-2">
             <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest block text-left ml-1">What year were you born?</label>
             <input

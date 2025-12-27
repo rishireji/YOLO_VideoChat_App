@@ -1,6 +1,8 @@
+
 import React, { useState, useRef, useEffect } from 'react';
 import { ChatMessage, Region, REGION_LABELS } from '../types';
 import { useSession } from '../context/SessionContext';
+import { Brand } from './Brand';
 
 interface SidebarProps {
   messages: ChatMessage[];
@@ -37,7 +39,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ messages, onSendMessage, onTog
     <div className="flex flex-col w-full lg:w-[400px] bg-zinc-950/50 lg:border-l border-t lg:border-t-0 border-zinc-800/50 h-[50vh] lg:h-full backdrop-blur-3xl shadow-2xl relative z-30 transition-all duration-700">
       <div className="p-4 lg:p-6 border-b border-zinc-800/50 flex items-center justify-between bg-zinc-950/80 sticky top-0 z-10">
         <div>
-          <h2 className="font-outfit font-bold text-lg lg:text-xl text-white tracking-tight hover:text-red-500 transition-colors cursor-default text-shadow-glow">YOLO Chat</h2>
+          <Brand size="md" className="hover:text-red-500 cursor-default" />
           <div className="flex items-center gap-2 mt-0.5">
             <div className={`w-1.5 h-1.5 rounded-full ${isConnected ? 'bg-red-500 animate-pulse shadow-[0_0_8px_rgba(239,68,68,0.8)]' : 'bg-zinc-700'}`}></div>
             <span className="text-[9px] lg:text-[10px] text-zinc-500 uppercase font-bold tracking-[0.2em]">
