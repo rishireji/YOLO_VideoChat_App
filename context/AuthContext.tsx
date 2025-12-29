@@ -4,7 +4,7 @@ import { UserProfile } from '../types';
 interface AuthContextType {
   user: { email: string; uid: string } | null;
   profile: UserProfile | null;
-  isLoading: boolean;
+  loading: boolean;
   signIn: (email: string) => Promise<void>;
   signUp: (email: string) => Promise<void>;
   logout: () => void;
@@ -19,7 +19,7 @@ const AUTH_STORAGE_KEY = 'YOLO_MOCK_AUTH_V1';
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<{ email: string; uid: string } | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const savedAuth = localStorage.getItem(AUTH_STORAGE_KEY);
@@ -32,7 +32,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         localStorage.removeItem(AUTH_STORAGE_KEY);
       }
     }
-    setIsLoading(false);
+    setLoading(false);
   }, []);
 
   const saveAuth = (email: string, uid: string, prof: UserProfile) => {
@@ -83,7 +83,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     <AuthContext.Provider value={{ 
       user, 
       profile, 
-      isLoading, 
+      loading, 
       signIn, 
       signUp, 
       logout, 
