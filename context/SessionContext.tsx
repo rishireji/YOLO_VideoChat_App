@@ -1,5 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { UserSession, Region, DAILY_ALLOWANCE } from '../types';
+import { auth } from '../lib/firebase';
+import { onAuthStateChanged } from 'firebase/auth';
 
 interface SessionContextType {
   session: UserSession | null;
@@ -13,7 +15,7 @@ interface SessionContextType {
 
 const SessionContext = createContext<SessionContextType | undefined>(undefined);
 
-const SESSION_KEY = 'YOLO_SESSION_V3'; // Versioned for coin update
+const SESSION_KEY = 'YOLO_SESSION_V3';
 const SESSION_DURATION = 24 * 60 * 60 * 1000;
 const RESET_CYCLE = 24 * 60 * 60 * 1000;
 
@@ -32,6 +34,33 @@ export const SessionProvider: React.FC<{ children: React.ReactNode }> = ({ child
       };
     }
     return sess;
+  }, []);
+
+  // Sync session with Auth state
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
+      if (firebaseUser) {
+        setSession(prev => {
+          if (!prev) return null;
+          // When signing in, we might want to load persistent purchased coins
+          const persistentCoins = localStorage.getItem(`YOLO_COINS_${firebaseUser.uid}`);
+          const purchased = persistentCoins ? parseInt(persistentCoins) : prev.purchasedCoins;
+          
+          const updated = { ...prev, uid: firebaseUser.uid, purchasedCoins: purchased };
+          localStorage.setItem(SESSION_KEY, JSON.stringify(updated));
+          return updated;
+        });
+      } else {
+        setSession(prev => {
+          if (!prev) return null;
+          const { uid, ...rest } = prev;
+          const updated = { ...rest };
+          localStorage.setItem(SESSION_KEY, JSON.stringify(updated));
+          return updated;
+        });
+      }
+    });
+    return unsubscribe;
   }, []);
 
   useEffect(() => {
@@ -56,6 +85,15 @@ export const SessionProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const createSession = (region: Region) => {
     const now = Date.now();
     const expiresAt = now + SESSION_DURATION;
+    const currentUser = auth.currentUser;
+    
+    // Load persistent coins if user is already signed in
+    let initialPurchased = 0;
+    if (currentUser) {
+      const saved = localStorage.getItem(`YOLO_COINS_${currentUser.uid}`);
+      if (saved) initialPurchased = parseInt(saved);
+    }
+
     const newSession: UserSession = {
       id: crypto.randomUUID?.() || Math.random().toString(36).substring(2) + now.toString(36),
       token: `jwt_anon_${Math.random().toString(36).substring(2)}`,
@@ -64,8 +102,9 @@ export const SessionProvider: React.FC<{ children: React.ReactNode }> = ({ child
       expiresAt,
       preferredLanguage: 'English',
       coins: DAILY_ALLOWANCE,
-      purchasedCoins: 0,
-      lastResetAt: now
+      purchasedCoins: initialPurchased,
+      lastResetAt: now,
+      uid: currentUser?.uid
     };
     
     setSession(newSession);
@@ -93,6 +132,12 @@ export const SessionProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
       const updated = { ...prev, coins: newCoins, purchasedCoins: newPurchased };
       localStorage.setItem(SESSION_KEY, JSON.stringify(updated));
+      
+      // Persist purchased coins if signed in
+      if (prev.uid) {
+        localStorage.setItem(`YOLO_COINS_${prev.uid}`, newPurchased.toString());
+      }
+      
       return updated;
     });
 
@@ -102,8 +147,14 @@ export const SessionProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const purchaseCoins = (amount: number) => {
     setSession(prev => {
       if (!prev) return null;
-      const updated = { ...prev, purchasedCoins: prev.purchasedCoins + amount };
+      const updatedPurchased = prev.purchasedCoins + amount;
+      const updated = { ...prev, purchasedCoins: updatedPurchased };
       localStorage.setItem(SESSION_KEY, JSON.stringify(updated));
+      
+      if (prev.uid) {
+        localStorage.setItem(`YOLO_COINS_${prev.uid}`, updatedPurchased.toString());
+      }
+      
       return updated;
     });
   };

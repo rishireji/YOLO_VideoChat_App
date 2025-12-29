@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { Peer, DataConnection, MediaConnection } from 'peerjs';
-import { Region, ReactionType } from '../types';
+import { Region, ReactionType, SignalingMessage } from '../types';
 import { useSession } from '../context/SessionContext';
 
 type WebRTCStatus = 'idle' | 'generating_id' | 'matching' | 'connecting' | 'connected' | 'disconnected' | 'error' | 'signaling_offline';
@@ -79,7 +79,6 @@ export const useWebRTC = (
   }, []);
 
   const cleanup = useCallback(() => {
-    console.log("[YOLO] Cleanup: Releasing locks and closing connections.");
     lockRef.current = null;
     setRemotePeerId(null);
     stopProposal();
@@ -101,7 +100,6 @@ export const useWebRTC = (
 
   const setupCallHandlers = useCallback((call: MediaConnection) => {
     call.on('stream', (remote) => {
-      console.log("[YOLO] WebRTC: Stream Established.");
       stopProposal(); 
       setRemoteStream(remote);
       setRemotePeerId(call.peer);
@@ -116,6 +114,9 @@ export const useWebRTC = (
     conn.on('data', (data: any) => {
       if (data.type === 'chat') onMessageReceived?.(data.text);
       if (data.type === 'reaction') onReactionReceived?.(data.value);
+      if (data.type === 'signal') {
+         window.dispatchEvent(new CustomEvent('rtc_signal', { detail: data.payload }));
+      }
     });
     conn.on('close', () => skip(false));
     conn.on('error', () => skip(false));
@@ -123,9 +124,7 @@ export const useWebRTC = (
   }, [skip, onMessageReceived, onReactionReceived]);
 
   const initiateP2P = useCallback((remoteId: string, stream: MediaStream) => {
-    console.log(`[YOLO] P2P: Initiating PeerJS Call to ${remoteId}`);
     updateStatus('connecting');
-    
     setTimeout(() => {
       if (!peerRef.current || peerRef.current.destroyed) return;
       try {
@@ -134,7 +133,6 @@ export const useWebRTC = (
         if (call) setupCallHandlers(call);
         if (conn) setupDataHandlers(conn);
       } catch (err) {
-        console.error("[YOLO] PeerJS Call Failed:", err);
         skip(true);
       }
     }, 200);
@@ -142,37 +140,27 @@ export const useWebRTC = (
 
   const connectSignaling = useCallback((myId: string, stream: MediaStream) => {
     if (isClosingRef.current) return;
-
     const channel = REGION_CHANNEL_MAP[region] || REGION_CHANNEL_MAP.global;
     const endpoint = `wss://${PIESOCKET_CLUSTER}/v3/${channel}?api_key=${SIGNALING_API_KEY}&notify_self=1&presence=true`;
-    
     const ws = new WebSocket(endpoint);
     wsRef.current = ws;
-    
     ws.onopen = () => {
       updateStatus('matching');
       broadcast({ type: 'presence', peerId: myId, status: 'matching' });
     };
-
     ws.onmessage = (e) => {
       try {
         const msg = JSON.parse(e.data);
-        
         if (msg.type === 'presence' && msg.peerId !== myId) {
           if (!lockRef.current && !blacklistRef.current.has(msg.peerId)) {
             lockRef.current = msg.peerId;
-            const attemptProposal = () => {
-              broadcast({ type: 'match-propose', targetId: msg.peerId, fromId: myId });
-            };
+            const attemptProposal = () => broadcast({ type: 'match-propose', targetId: msg.peerId, fromId: myId });
             stopProposal();
             attemptProposal();
             proposalIntervalRef.current = setInterval(attemptProposal, 1500);
-            handshakeTimeoutRef.current = setTimeout(() => {
-              if (lockRef.current === msg.peerId) skip(true);
-            }, 6000);
+            handshakeTimeoutRef.current = setTimeout(() => { if (lockRef.current === msg.peerId) skip(true); }, 6000);
           }
         }
-
         if (msg.type === 'match-propose' && msg.targetId === myId) {
           if (!lockRef.current) {
             lockRef.current = msg.fromId;
@@ -180,28 +168,16 @@ export const useWebRTC = (
             broadcast({ type: 'match-accept', targetId: msg.fromId, fromId: myId });
           }
         }
-
         if (msg.type === 'match-accept' && msg.targetId === myId) {
           if (lockRef.current === msg.fromId) {
             stopProposal();
             initiateP2P(msg.fromId, stream);
           }
         }
-
-        if (msg.event === 'system:member_left' && lockRef.current) {
-          skip(false);
-        }
-      } catch (err) {
-        console.error("[YOLO] Signaling Message Error:", err);
-      }
+        if (msg.event === 'system:member_left' && lockRef.current) skip(false);
+      } catch (err) {}
     };
-
-    ws.onclose = () => {
-      if (isClosingRef.current) return;
-      updateStatus('signaling_offline');
-      setTimeout(() => connectSignaling(myId, stream), 3000);
-    };
-
+    ws.onclose = () => { if (!isClosingRef.current) { updateStatus('signaling_offline'); setTimeout(() => connectSignaling(myId, stream), 3000); } };
     ws.onerror = () => ws.close();
   }, [region, broadcast, initiateP2P, skip, stopProposal, updateStatus]);
 
@@ -210,96 +186,31 @@ export const useWebRTC = (
     const init = async () => {
       if (!session?.id) return;
       updateStatus('generating_id');
-      
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({ 
-          video: { width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { max: 30 } }, 
-          audio: true 
-        });
-        
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 }, audio: true });
         if (!mounted) { stream.getTracks().forEach(t => t.stop()); return; }
         setLocalStream(stream);
-
         const uniqueId = `yolo_${session.id.substring(0,6)}_${Math.random().toString(36).substring(7)}`;
         const peer = new Peer(uniqueId, { debug: 1, config: ICE_CONFIG, secure: true });
         peerRef.current = peer;
-
-        peer.on('open', (id) => {
-          if (mounted) connectSignaling(id, stream);
-        });
-
-        peer.on('call', (incoming) => {
-          if (lockRef.current && incoming.peer === lockRef.current) {
-            stopProposal(); 
-            updateStatus('connecting');
-            incoming.answer(stream);
-            setupCallHandlers(incoming);
-          } else {
-            incoming.close();
-          }
-        });
-
-        peer.on('connection', (conn) => {
-          if (lockRef.current && conn.peer === lockRef.current) {
-            setupDataHandlers(conn);
-          }
-        });
-
-        peer.on('error', (err) => {
-          if (['peer-unavailable', 'network', 'webrtc'].includes(err.type)) {
-            skip(true);
-          }
-        });
-      } catch (err) {
-        if (mounted) updateStatus('error');
-      }
+        peer.on('open', (id) => { if (mounted) connectSignaling(id, stream); });
+        peer.on('call', (incoming) => { if (lockRef.current && incoming.peer === lockRef.current) { stopProposal(); updateStatus('connecting'); incoming.answer(stream); setupCallHandlers(incoming); } else incoming.close(); });
+        peer.on('connection', (conn) => { if (lockRef.current && conn.peer === lockRef.current) setupDataHandlers(conn); });
+        peer.on('error', (err) => { if (['peer-unavailable', 'network', 'webrtc'].includes(err.type)) skip(true); });
+      } catch (err) { if (mounted) updateStatus('error'); }
     };
-
     init();
-
-    return () => {
-      mounted = false;
-      isClosingRef.current = true;
-      cleanup();
-      if (peerRef.current) peerRef.current.destroy();
-      if (wsRef.current) wsRef.current.close();
-      if (localStream) localStream.getTracks().forEach(t => t.stop());
-    };
+    return () => { mounted = false; isClosingRef.current = true; cleanup(); if (peerRef.current) peerRef.current.destroy(); if (wsRef.current) wsRef.current.close(); if (localStream) localStream.getTracks().forEach(t => t.stop()); };
   }, [session?.id, cleanup, connectSignaling, setupCallHandlers, setupDataHandlers, skip, stopProposal, updateStatus]);
 
-  const toggleMute = useCallback(() => {
-    if (localStream) {
-      const audioTrack = localStream.getAudioTracks()[0];
-      if (audioTrack) {
-        const nextState = !audioTrack.enabled;
-        audioTrack.enabled = nextState;
-        setIsMuted(!nextState);
-      }
-    }
-  }, [localStream]);
-
-  const toggleVideo = useCallback(() => {
-    if (localStream) {
-      const videoTrack = localStream.getVideoTracks()[0];
-      if (videoTrack) {
-        const nextState = !videoTrack.enabled;
-        videoTrack.enabled = nextState;
-        setIsVideoOff(!nextState);
-      }
-    }
-  }, [localStream]);
+  const toggleMute = useCallback(() => { if (localStream) { const audioTrack = localStream.getAudioTracks()[0]; if (audioTrack) audioTrack.enabled = !audioTrack.enabled; setIsMuted(!audioTrack?.enabled); } }, [localStream]);
+  const toggleVideo = useCallback(() => { if (localStream) { const videoTrack = localStream.getVideoTracks()[0]; if (videoTrack) videoTrack.enabled = !videoTrack.enabled; setIsVideoOff(!videoTrack?.enabled); } }, [localStream]);
 
   return {
-    localStream, 
-    remoteStream, 
-    status, 
+    localStream, remoteStream, status, isMuted, isVideoOff, toggleMute, toggleVideo, remotePeerId,
     sendMessage: (text: string) => { if (connRef.current?.open) connRef.current.send({ type: 'chat', text }); },
     sendReaction: (value: ReactionType) => { if (connRef.current?.open) connRef.current.send({ type: 'reaction', value }); },
+    sendSignal: (payload: any) => { if (connRef.current?.open) connRef.current.send({ type: 'signal', payload }); },
     skip: () => skip(false), 
-    isMuted, 
-    isVideoOff, 
-    toggleMute,
-    toggleVideo,
-    remotePeerId
   };
 };

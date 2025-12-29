@@ -1,14 +1,15 @@
-
 import React, { useState, useEffect } from 'react';
 import { LandingPage } from './components/LandingPage';
 import { ChatRoom } from './components/ChatRoom';
 import { AgeGate } from './components/AgeGate';
 import { Navbar } from './components/Navbar';
 import { SessionProvider, useSession } from './context/SessionContext';
+import { AuthProvider, useAuth } from './context/AuthContext';
 import { Brand } from './components/Brand';
 
 const AppContent: React.FC = () => {
   const { session, clearSession } = useSession();
+  const { loading: authLoading } = useAuth();
   const [isStarted, setIsStarted] = useState(false);
   const [isAgeVerified, setIsAgeVerified] = useState<boolean | null>(null);
 
@@ -33,6 +34,8 @@ const AppContent: React.FC = () => {
     clearSession();
     setIsStarted(false);
   };
+
+  if (authLoading) return <div className="min-h-screen bg-black flex items-center justify-center"><div className="w-12 h-12 border-4 border-red-500 border-t-transparent rounded-full animate-spin"></div></div>;
 
   if (session?.isModerated) {
     return (
@@ -88,9 +91,11 @@ const AppContent: React.FC = () => {
 
 const App: React.FC = () => {
   return (
-    <SessionProvider>
-      <AppContent />
-    </SessionProvider>
+    <AuthProvider>
+      <SessionProvider>
+        <AppContent />
+      </SessionProvider>
+    </AuthProvider>
   );
 };
 

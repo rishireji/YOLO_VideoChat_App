@@ -2,6 +2,16 @@ export type Region = 'global' | 'us-east' | 'us-west' | 'europe' | 'asia' | 'sou
 
 export type ReactionType = 'like' | 'laugh' | 'hug' | 'heart' | 'wow';
 
+export interface UserProfile {
+  uid: string;
+  photos: string[]; // base64 or URL
+  primaryPhotoIndex: number;
+  bio: string;
+  allowFriendRequests: boolean;
+  revealPhotosToFriendsOnly: boolean;
+  friends: string[]; // UIDs
+}
+
 export interface UserSession {
   id: string;
   token: string;
@@ -12,15 +22,17 @@ export interface UserSession {
   coins: number;
   purchasedCoins: number;
   lastResetAt: number;
+  uid?: string; // Firebase UID if signed in
 }
 
 export interface SignalingMessage {
-  type: 'presence' | 'match_request' | 'match_accept' | 'offer' | 'answer' | 'candidate' | 'disconnect';
+  type: 'presence' | 'match_request' | 'match_accept' | 'offer' | 'answer' | 'candidate' | 'disconnect' | 'friend_request' | 'friend_accept';
   senderId: string;
   targetId?: string;
   region?: Region;
   sdp?: RTCSessionDescriptionInit;
   candidate?: RTCIceCandidateInit;
+  payload?: any;
 }
 
 export interface ChatMessage {
