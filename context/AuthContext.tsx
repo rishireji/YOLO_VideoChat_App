@@ -1,76 +1,95 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
-import { onAuthStateChanged, User, signOut } from 'firebase/auth';
-import { auth } from '../lib/firebase';
+import React, { createContext, useContext, useState, useEffect } from 'react';
 import { UserProfile } from '../types';
 
 interface AuthContextType {
-  user: User | null;
+  user: { email: string; uid: string } | null;
   profile: UserProfile | null;
-  loading: boolean;
-  logout: () => Promise<void>;
+  isLoading: boolean;
+  signIn: (email: string) => Promise<void>;
+  signUp: (email: string) => Promise<void>;
+  logout: () => void;
   updateProfile: (updates: Partial<UserProfile>) => void;
-  deleteAccount: () => Promise<void>;
+  deleteAccount: () => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+const AUTH_STORAGE_KEY = 'YOLO_MOCK_AUTH_V1';
+
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] = useState<{ email: string; uid: string } | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
-      setUser(firebaseUser);
-      if (firebaseUser) {
-        // Load profile from "backend" (simulated with localStorage)
-        const savedProfile = localStorage.getItem(`YOLO_PROFILE_${firebaseUser.uid}`);
-        if (savedProfile) {
-          setProfile(JSON.parse(savedProfile));
-        } else {
-          // Initialize default profile
-          const newProfile: UserProfile = {
-            uid: firebaseUser.uid,
-            photos: [],
-            primaryPhotoIndex: 0,
-            bio: '',
-            allowFriendRequests: true,
-            revealPhotosToFriendsOnly: true,
-            friends: []
-          };
-          setProfile(newProfile);
-          localStorage.setItem(`YOLO_PROFILE_${firebaseUser.uid}`, JSON.stringify(newProfile));
-        }
-      } else {
-        setProfile(null);
+    const savedAuth = localStorage.getItem(AUTH_STORAGE_KEY);
+    if (savedAuth) {
+      try {
+        const data = JSON.parse(savedAuth);
+        setUser({ email: data.email, uid: data.uid });
+        setProfile(data.profile);
+      } catch (e) {
+        localStorage.removeItem(AUTH_STORAGE_KEY);
       }
-      setLoading(false);
-    });
-
-    return unsubscribe;
+    }
+    setIsLoading(false);
   }, []);
 
+  const saveAuth = (email: string, uid: string, prof: UserProfile) => {
+    localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify({ email, uid, profile: prof }));
+    setUser({ email, uid });
+    setProfile(prof);
+  };
+
+  const signIn = async (email: string) => {
+    // In mock mode, we just check if this email exists in our simple simulated store
+    // For now, we'll just treat any email as "found" or "created"
+    const uid = `mock_uid_${Math.random().toString(36).substring(7)}`;
+    const newProfile: UserProfile = {
+      uid,
+      email,
+      photos: [],
+      primaryPhotoIndex: 0,
+      bio: '',
+      allowFriendRequests: true,
+      revealPhotosToFriendsOnly: true,
+      friends: []
+    };
+    saveAuth(email, uid, newProfile);
+  };
+
+  const signUp = async (email: string) => {
+    await signIn(email); // Mock signUp behaves the same as signIn
+  };
+
+  const logout = () => {
+    localStorage.removeItem(AUTH_STORAGE_KEY);
+    setUser(null);
+    setProfile(null);
+  };
+
   const updateProfile = (updates: Partial<UserProfile>) => {
-    if (!user || !profile) return;
-    const updated = { ...profile, ...updates };
-    setProfile(updated);
-    localStorage.setItem(`YOLO_PROFILE_${user.uid}`, JSON.stringify(updated));
+    if (!profile || !user) return;
+    const newProfile = { ...profile, ...updates };
+    setProfile(newProfile);
+    saveAuth(user.email, user.uid, newProfile);
   };
 
-  const logout = async () => {
-    await signOut(auth);
-  };
-
-  const deleteAccount = async () => {
-    if (!user) return;
-    localStorage.removeItem(`YOLO_PROFILE_${user.uid}`);
-    localStorage.removeItem(`YOLO_COINS_${user.uid}`); // Clean up persistent coins too
-    await user.delete();
-    await signOut(auth);
+  const deleteAccount = () => {
+    logout();
   };
 
   return (
-    <AuthContext.Provider value={{ user, profile, loading, logout, updateProfile, deleteAccount }}>
+    <AuthContext.Provider value={{ 
+      user, 
+      profile, 
+      isLoading, 
+      signIn, 
+      signUp, 
+      logout, 
+      updateProfile, 
+      deleteAccount 
+    }}>
       {children}
     </AuthContext.Provider>
   );

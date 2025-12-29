@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
-import { signInWithEmailAndPassword, createUserWithEmailAndPassword, GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
-import { auth } from '../lib/firebase';
+import { useAuth } from '../context/AuthContext';
 import { Brand } from './Brand';
 
 interface SignInModalProps {
@@ -9,9 +8,10 @@ interface SignInModalProps {
 }
 
 export const SignInModal: React.FC<SignInModalProps> = ({ isOpen, onClose }) => {
+  const { signIn, signUp } = useAuth();
   const [isSignUp, setIsSignUp] = useState(false);
   const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
+  const [password, setPassword] = useState(''); // Kept for UI logic, though mock doesn't use it
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -23,9 +23,9 @@ export const SignInModal: React.FC<SignInModalProps> = ({ isOpen, onClose }) => 
     setLoading(true);
     try {
       if (isSignUp) {
-        await createUserWithEmailAndPassword(auth, email, password);
+        await signUp(email);
       } else {
-        await signInWithEmailAndPassword(auth, email, password);
+        await signIn(email);
       }
       onClose();
     } catch (err: any) {
@@ -37,12 +37,14 @@ export const SignInModal: React.FC<SignInModalProps> = ({ isOpen, onClose }) => 
 
   const handleGoogleSignIn = async () => {
     setError('');
+    setLoading(true);
     try {
-      const provider = new GoogleAuthProvider();
-      await signInWithPopup(auth, provider);
+      await signIn('google_user@example.com');
       onClose();
     } catch (err: any) {
-      setError(err.message || 'Google sign-in failed');
+      setError('Google sign-in failed');
+    } finally {
+      setLoading(false);
     }
   };
 

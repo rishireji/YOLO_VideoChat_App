@@ -10,6 +10,7 @@ export interface TranslationResult {
 export const useTranslation = () => {
   const translateText = useCallback(async (text: string, targetLanguage: string): Promise<TranslationResult | null> => {
     try {
+      // Fix: Always use named parameter and process.env.API_KEY directly for GoogleGenAI initialization.
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       const response = await ai.models.generateContent({
         model: 'gemini-3-flash-preview',

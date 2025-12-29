@@ -2,16 +2,6 @@ export type Region = 'global' | 'us-east' | 'us-west' | 'europe' | 'asia' | 'sou
 
 export type ReactionType = 'like' | 'laugh' | 'hug' | 'heart' | 'wow';
 
-export interface UserProfile {
-  uid: string;
-  photos: string[]; // base64 or URL
-  primaryPhotoIndex: number;
-  bio: string;
-  allowFriendRequests: boolean;
-  revealPhotosToFriendsOnly: boolean;
-  friends: string[]; // UIDs
-}
-
 export interface UserSession {
   id: string;
   token: string;
@@ -22,11 +12,21 @@ export interface UserSession {
   coins: number;
   purchasedCoins: number;
   lastResetAt: number;
-  uid?: string; // Firebase UID if signed in
+}
+
+export interface UserProfile {
+  uid: string;
+  email: string;
+  photos: string[];
+  primaryPhotoIndex: number;
+  bio: string;
+  allowFriendRequests: boolean;
+  revealPhotosToFriendsOnly: boolean;
+  friends: string[];
 }
 
 export interface SignalingMessage {
-  type: 'presence' | 'match_request' | 'match_accept' | 'offer' | 'answer' | 'candidate' | 'disconnect' | 'friend_request' | 'friend_accept';
+  type: 'presence' | 'match_request' | 'match_accept' | 'offer' | 'answer' | 'candidate' | 'disconnect';
   senderId: string;
   targetId?: string;
   region?: Region;
