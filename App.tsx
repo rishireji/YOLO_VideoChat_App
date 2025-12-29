@@ -3,11 +3,12 @@ import React, { useState, useEffect } from 'react';
 import { LandingPage } from './components/LandingPage';
 import { ChatRoom } from './components/ChatRoom';
 import { AgeGate } from './components/AgeGate';
+import { Navbar } from './components/Navbar';
 import { SessionProvider, useSession } from './context/SessionContext';
 import { Brand } from './components/Brand';
 
 const AppContent: React.FC = () => {
-  const { session } = useSession();
+  const { session, clearSession } = useSession();
   const [isStarted, setIsStarted] = useState(false);
   const [isAgeVerified, setIsAgeVerified] = useState<boolean | null>(null);
 
@@ -26,6 +27,11 @@ const AppContent: React.FC = () => {
     } else {
       setIsAgeVerified(false);
     }
+  };
+
+  const handleSignOut = () => {
+    clearSession();
+    setIsStarted(false);
   };
 
   if (session?.isModerated) {
@@ -68,6 +74,7 @@ const AppContent: React.FC = () => {
       
       {isAgeVerified && (
         <>
+          <Navbar onSignOut={handleSignOut} />
           {!isStarted ? (
             <LandingPage onStart={() => setIsStarted(true)} />
           ) : (

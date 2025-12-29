@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from 'react';
 import { useSession } from '../context/SessionContext';
 import { Region, REGION_LABELS, DAILY_ALLOWANCE } from '../types';
@@ -125,37 +126,9 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onStart }) => {
 
   if (isLoading) return <div className="min-h-screen bg-black flex items-center justify-center"><div className="w-12 h-12 border-4 border-red-500 border-t-transparent rounded-full animate-spin"></div></div>;
 
-  const totalCoins = session ? (session.coins + session.purchasedCoins) : 0;
-  const energyPercentage = Math.min(100, (totalCoins / DAILY_ALLOWANCE) * 100);
-
   return (
     <div className="relative w-full bg-black">
       <CyberBackground />
-
-      {/* Header / Coin Monitor */}
-      {session && (
-        <div className="fixed top-6 right-6 z-50 animate-in slide-in-from-top-4 duration-1000">
-          <div className="bg-zinc-950/40 backdrop-blur-3xl border border-white/10 px-5 py-3 rounded-2xl flex flex-col gap-1.5 shadow-2xl min-w-[140px]">
-            <div className="flex items-center justify-between gap-6">
-               <span className="text-[9px] font-black uppercase tracking-[0.3em] text-zinc-500">Node Energy</span>
-               <span className={`text-[11px] font-bold font-outfit ${totalCoins < 20 ? 'text-red-500 animate-pulse' : 'text-zinc-200'}`}>
-                 {totalCoins} YC
-               </span>
-            </div>
-            <div className="h-1 w-full bg-zinc-900 rounded-full overflow-hidden flex gap-0.5">
-              {[...Array(10)].map((_, i) => {
-                const isActive = (i + 1) * 10 <= energyPercentage;
-                return (
-                  <div 
-                    key={i} 
-                    className={`flex-1 h-full transition-all duration-1000 ${isActive ? (totalCoins < 20 ? 'bg-red-500' : 'bg-red-600/60') : 'bg-zinc-800/20'}`}
-                  ></div>
-                );
-              })}
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Hero Section */}
       <section className="relative flex flex-col items-center justify-center min-h-screen px-4 text-center overflow-hidden">

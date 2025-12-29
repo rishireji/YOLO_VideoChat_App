@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { AppState, ChatMessage, REGION_LABELS, ReactionType, REACTION_EMOJIS, COST_PER_CALL } from '../types';
 import { VideoFeed } from './VideoFeed';
@@ -204,7 +205,7 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ onExit }) => {
   };
 
   return (
-    <div className="flex flex-col lg:flex-row h-screen w-full bg-zinc-950 overflow-hidden relative font-inter">
+    <div className="flex flex-col lg:flex-row h-screen w-full bg-zinc-950 overflow-hidden relative font-inter pt-20">
       <ReportModal isOpen={isReportModalOpen} onClose={() => setIsReportModalOpen(false)} onSubmit={() => skip()} />
 
       {/* Main Video Area */}
