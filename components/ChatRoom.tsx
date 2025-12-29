@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { AppState, ChatMessage, REGION_LABELS, ReactionType, REACTION_EMOJIS } from '../types';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { AppState, ChatMessage, REGION_LABELS, ReactionType, REACTION_EMOJIS, COST_PER_CALL } from '../types';
 import { VideoFeed } from './VideoFeed';
 import { Controls } from './Controls';
 import { Sidebar } from './Sidebar';
@@ -23,13 +23,14 @@ interface FloatingReaction {
 }
 
 export const ChatRoom: React.FC<ChatRoomProps> = ({ onExit }) => {
-  const { session } = useSession();
+  const { session, deductCoins } = useSession();
   const { translateText } = useTranslation();
   const [appState, setAppState] = useState<AppState>(AppState.MATCHMAKING);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isReportModalOpen, setIsReportModalOpen] = useState(false);
   const [activeReactions, setActiveReactions] = useState<FloatingReaction[]>([]);
   const [isUserActive, setIsUserActive] = useState(true);
+  const hasDeductedRef = useRef<string | null>(null);
 
   const handleReactionReceived = useCallback((type: ReactionType) => {
     const id = Math.random().toString(36).substring(7);
@@ -80,7 +81,8 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ onExit }) => {
     isMuted, 
     isVideoOff, 
     toggleMute, 
-    toggleVideo 
+    toggleVideo,
+    remotePeerId 
   } = useWebRTC(session?.region || 'global', handleReactionReceived, handleMessageReceived);
 
   useModeration(localStream);
@@ -88,13 +90,12 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ onExit }) => {
   // Keyboard Shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Don't trigger shortcuts if user is typing in a text field
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
 
       switch(e.code) {
         case 'Space':
           e.preventDefault();
-          skip();
+          if (appState !== AppState.EXHAUSTED) skip();
           break;
         case 'Escape':
           e.preventDefault();
@@ -111,9 +112,9 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ onExit }) => {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [skip, onExit, toggleMute, toggleVideo]);
+  }, [skip, onExit, toggleMute, toggleVideo, appState]);
 
-  // Activity detection to hide/show UI
+  // Activity detection
   useEffect(() => {
     let timeout: number;
     const handleActivity = () => {
@@ -132,6 +133,8 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ onExit }) => {
   }, []);
 
   useEffect(() => {
+    if (appState === AppState.EXHAUSTED) return;
+
     switch (status) {
       case 'matching':
       case 'connecting':
@@ -141,6 +144,18 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ onExit }) => {
         break;
       case 'connected':
         setAppState(AppState.CONNECTED);
+        
+        // DEDUCT COINS ON SUCCESSFUL CONNECTION
+        if (remotePeerId && hasDeductedRef.current !== remotePeerId) {
+          console.log("[YOLO] Connection established. Charging energy.");
+          const success = deductCoins(COST_PER_CALL);
+          if (success) {
+            hasDeductedRef.current = remotePeerId;
+          } else {
+            setAppState(AppState.EXHAUSTED);
+          }
+        }
+
         setMessages([{
           id: 'system-' + Date.now(),
           senderId: 'system',
@@ -155,7 +170,18 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ onExit }) => {
         setAppState(AppState.MATCHMAKING);
         break;
     }
-  }, [status]);
+  }, [status, remotePeerId, deductCoins, appState]);
+
+  // Check coins before skipping
+  const handleSkip = useCallback(() => {
+    if (!session) return;
+    const total = session.coins + session.purchasedCoins;
+    if (total < COST_PER_CALL) {
+      setAppState(AppState.EXHAUSTED);
+    } else {
+      skip();
+    }
+  }, [session, skip]);
 
   const handleSendMessage = (text: string) => {
     const msg: ChatMessage = { id: Date.now().toString(), senderId: 'me', text, timestamp: Date.now() };
@@ -190,6 +216,13 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ onExit }) => {
               status={status}
             />
           )}
+
+          {appState === AppState.EXHAUSTED && (
+            <MatchmakingOverlay 
+              isExhausted={true}
+              onCancel={onExit}
+            />
+          )}
           
           <VideoFeed stream={remoteStream} isRemote label="Stranger" />
 
@@ -202,7 +235,7 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ onExit }) => {
             ))}
           </div>
           
-          {/* Local PiP (Picture in Picture) */}
+          {/* Local PiP */}
           <div className="absolute top-6 left-6 w-32 md:w-56 aspect-video bg-zinc-950 rounded-2xl md:rounded-[32px] overflow-hidden shadow-2xl border border-white/10 z-30 group/pip transition-all hover:scale-105 active:scale-95 cursor-move">
             <VideoFeed stream={localStream} isRemote={false} label="You" isMuted={true} />
             <div className="absolute inset-0 pointer-events-none overflow-hidden z-10">
@@ -214,11 +247,11 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ onExit }) => {
             </div>
           </div>
 
-          {/* Floating Action Cockpit (The Controls) */}
+          {/* Floating Action Cockpit */}
           <div className={`absolute bottom-8 left-1/2 -translate-x-1/2 z-50 transition-all duration-500 ${isUserActive || appState === AppState.MATCHMAKING ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4 pointer-events-none'}`}>
             <Controls 
               appState={appState} 
-              onNext={skip} 
+              onNext={handleSkip} 
               onExit={onExit}
               isMuted={isMuted}
               isVideoOff={isVideoOff}
@@ -231,7 +264,6 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ onExit }) => {
         </div>
       </div>
 
-      {/* Sidebar - Remains persistent as requested */}
       <Sidebar 
         messages={messages} 
         onSendMessage={handleSendMessage} 

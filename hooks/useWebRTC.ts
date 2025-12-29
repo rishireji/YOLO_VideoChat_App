@@ -1,4 +1,3 @@
-
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { Peer, DataConnection, MediaConnection } from 'peerjs';
 import { Region, ReactionType } from '../types';
@@ -44,6 +43,7 @@ export const useWebRTC = (
   const [status, setStatusState] = useState<WebRTCStatus>('idle');
   const [isMuted, setIsMuted] = useState(false);
   const [isVideoOff, setIsVideoOff] = useState(false);
+  const [remotePeerId, setRemotePeerId] = useState<string | null>(null);
   
   const peerRef = useRef<Peer | null>(null);
   const callRef = useRef<MediaConnection | null>(null);
@@ -81,6 +81,7 @@ export const useWebRTC = (
   const cleanup = useCallback(() => {
     console.log("[YOLO] Cleanup: Releasing locks and closing connections.");
     lockRef.current = null;
+    setRemotePeerId(null);
     stopProposal();
     if (callRef.current) { callRef.current.close(); callRef.current = null; }
     if (connRef.current) { connRef.current.close(); connRef.current = null; }
@@ -103,6 +104,7 @@ export const useWebRTC = (
       console.log("[YOLO] WebRTC: Stream Established.");
       stopProposal(); 
       setRemoteStream(remote);
+      setRemotePeerId(call.peer);
       updateStatus('connected');
     });
     call.on('close', () => skip(false));
@@ -297,6 +299,7 @@ export const useWebRTC = (
     isMuted, 
     isVideoOff, 
     toggleMute,
-    toggleVideo
+    toggleVideo,
+    remotePeerId
   };
 };

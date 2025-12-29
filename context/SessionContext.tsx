@@ -1,33 +1,48 @@
-
-import React, { createContext, useContext, useState, useEffect } from 'react';
-import { UserSession, Region } from '../types';
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import { UserSession, Region, DAILY_ALLOWANCE } from '../types';
 
 interface SessionContextType {
   session: UserSession | null;
   createSession: (region: Region) => void;
   updateSession: (updates: Partial<UserSession>) => void;
   clearSession: () => void;
+  deductCoins: (amount: number) => boolean;
+  purchaseCoins: (amount: number) => void;
   isLoading: boolean;
 }
 
 const SessionContext = createContext<SessionContextType | undefined>(undefined);
 
-const SESSION_KEY = 'YOLO_SESSION_V2';
-const SESSION_DURATION = 24 * 60 * 60 * 1000; // 24 Hours
+const SESSION_KEY = 'YOLO_SESSION_V3'; // Versioned for coin update
+const SESSION_DURATION = 24 * 60 * 60 * 1000;
+const RESET_CYCLE = 24 * 60 * 60 * 1000;
 
 export const SessionProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [session, setSession] = useState<UserSession | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
-  // Initialize: Check for existing persistent session
+  const checkAndResetCoins = useCallback((sess: UserSession): UserSession => {
+    const now = Date.now();
+    if (now - sess.lastResetAt >= RESET_CYCLE) {
+      console.log("[YOLO] Daily reset triggered. Restoring coins.");
+      return {
+        ...sess,
+        coins: DAILY_ALLOWANCE,
+        lastResetAt: now
+      };
+    }
+    return sess;
+  }, []);
+
   useEffect(() => {
     const savedSession = localStorage.getItem(SESSION_KEY);
     if (savedSession) {
       try {
-        const parsed: UserSession = JSON.parse(savedSession);
-        // Validate expiry
+        let parsed: UserSession = JSON.parse(savedSession);
         if (Date.now() < parsed.expiresAt) {
+          parsed = checkAndResetCoins(parsed);
           setSession(parsed);
+          localStorage.setItem(SESSION_KEY, JSON.stringify(parsed));
         } else {
           localStorage.removeItem(SESSION_KEY);
         }
@@ -36,21 +51,61 @@ export const SessionProvider: React.FC<{ children: React.ReactNode }> = ({ child
       }
     }
     setIsLoading(false);
-  }, []);
+  }, [checkAndResetCoins]);
 
   const createSession = (region: Region) => {
-    const expiresAt = Date.now() + SESSION_DURATION;
+    const now = Date.now();
+    const expiresAt = now + SESSION_DURATION;
     const newSession: UserSession = {
-      id: crypto.randomUUID?.() || Math.random().toString(36).substring(2) + Date.now().toString(36),
+      id: crypto.randomUUID?.() || Math.random().toString(36).substring(2) + now.toString(36),
       token: `jwt_anon_${Math.random().toString(36).substring(2)}`,
       region,
       isModerated: false,
       expiresAt,
-      preferredLanguage: 'English'
+      preferredLanguage: 'English',
+      coins: DAILY_ALLOWANCE,
+      purchasedCoins: 0,
+      lastResetAt: now
     };
     
     setSession(newSession);
     localStorage.setItem(SESSION_KEY, JSON.stringify(newSession));
+  };
+
+  const deductCoins = (amount: number): boolean => {
+    if (!session) return false;
+    
+    const totalAvailable = session.coins + session.purchasedCoins;
+    if (totalAvailable < amount) return false;
+
+    setSession(prev => {
+      if (!prev) return null;
+      let newCoins = prev.coins;
+      let newPurchased = prev.purchasedCoins;
+
+      if (newCoins >= amount) {
+        newCoins -= amount;
+      } else {
+        const remainder = amount - newCoins;
+        newCoins = 0;
+        newPurchased -= remainder;
+      }
+
+      const updated = { ...prev, coins: newCoins, purchasedCoins: newPurchased };
+      localStorage.setItem(SESSION_KEY, JSON.stringify(updated));
+      return updated;
+    });
+
+    return true;
+  };
+
+  const purchaseCoins = (amount: number) => {
+    setSession(prev => {
+      if (!prev) return null;
+      const updated = { ...prev, purchasedCoins: prev.purchasedCoins + amount };
+      localStorage.setItem(SESSION_KEY, JSON.stringify(updated));
+      return updated;
+    });
   };
 
   const updateSession = (updates: Partial<UserSession>) => {
@@ -68,7 +123,7 @@ export const SessionProvider: React.FC<{ children: React.ReactNode }> = ({ child
   };
 
   return (
-    <SessionContext.Provider value={{ session, createSession, updateSession, clearSession, isLoading }}>
+    <SessionContext.Provider value={{ session, createSession, updateSession, clearSession, deductCoins, purchaseCoins, isLoading }}>
       {children}
     </SessionContext.Provider>
   );

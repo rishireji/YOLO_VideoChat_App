@@ -1,19 +1,90 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
+import { useSession } from '../context/SessionContext';
 
 interface MatchmakingOverlayProps {
   regionName?: string;
   onCancel?: () => void;
   status?: string;
+  isExhausted?: boolean;
 }
 
 export const MatchmakingOverlay: React.FC<MatchmakingOverlayProps> = ({ 
   regionName = 'Global', 
   onCancel,
-  status = 'matching'
+  status = 'matching',
+  isExhausted = false
 }) => {
+  const { session, purchaseCoins } = useSession();
+  const [timeLeft, setTimeLeft] = useState<string>('');
+
+  useEffect(() => {
+    if (isExhausted && session) {
+      const timer = setInterval(() => {
+        const nextReset = session.lastResetAt + (24 * 60 * 60 * 1000);
+        const diff = nextReset - Date.now();
+        if (diff <= 0) {
+          setTimeLeft('NOW');
+        } else {
+          const h = Math.floor(diff / 3600000);
+          const m = Math.floor((diff % 3600000) / 60000);
+          const s = Math.floor((diff % 60000) / 1000);
+          setTimeLeft(`${h}h ${m}m ${s}s`);
+        }
+      }, 1000);
+      return () => clearInterval(timer);
+    }
+  }, [isExhausted, session]);
+
   const isConnecting = status === 'connecting';
   const isError = status === 'error';
   const isReconnecting = status === 'reconnecting' || status === 'signaling_offline';
+
+  if (isExhausted) {
+    return (
+      <div className="absolute inset-0 z-[100] flex flex-col items-center justify-center bg-zinc-950/98 backdrop-blur-3xl px-6 animate-in fade-in duration-500">
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-red-600/5 rounded-full blur-[160px]"></div>
+        
+        <div className="w-24 h-24 bg-red-600/10 border border-red-500/30 rounded-[32px] flex items-center justify-center mb-10 shadow-[0_0_50px_rgba(220,38,38,0.1)]">
+           <svg className="w-12 h-12 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+           </svg>
+        </div>
+
+        <div className="text-center space-y-4 max-w-sm mb-12">
+          <h2 className="text-4xl font-outfit font-black tracking-tight text-white uppercase italic">Core Depleted</h2>
+          <p className="text-zinc-500 text-sm font-medium leading-relaxed">
+            Your daily YOLO Coins are exhausted. New connections are suspended until the next energy cycle.
+          </p>
+        </div>
+
+        <div className="grid grid-cols-2 gap-4 w-full max-w-sm mb-12">
+          <div className="bg-zinc-900/50 border border-white/5 p-6 rounded-3xl text-center">
+            <span className="text-[10px] font-black uppercase tracking-widest text-zinc-500 block mb-1">Reset In</span>
+            <span className="text-xl font-outfit font-bold text-white">{timeLeft}</span>
+          </div>
+          <div className="bg-zinc-900/50 border border-white/5 p-6 rounded-3xl text-center">
+            <span className="text-[10px] font-black uppercase tracking-widest text-zinc-500 block mb-1">Cost / Match</span>
+            <span className="text-xl font-outfit font-bold text-red-500">10 COINS</span>
+          </div>
+        </div>
+
+        <div className="flex flex-col w-full max-w-sm gap-4">
+          <button 
+            onClick={() => purchaseCoins(100)}
+            className="w-full py-5 bg-white text-black font-black uppercase tracking-widest rounded-2xl hover:bg-zinc-200 transition-all active:scale-95 shadow-xl"
+          >
+            Refill Energy (100 Coins)
+          </button>
+          <button 
+            onClick={onCancel}
+            className="w-full py-5 bg-zinc-900 text-zinc-500 font-bold uppercase tracking-widest rounded-2xl hover:text-white transition-all border border-white/5"
+          >
+            Back to Hub
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   const getStatusText = () => {
     switch(status) {

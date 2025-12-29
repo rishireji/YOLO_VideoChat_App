@@ -1,4 +1,3 @@
-
 export type Region = 'global' | 'us-east' | 'us-west' | 'europe' | 'asia' | 'south-america' | 'africa' | 'oceania';
 
 export type ReactionType = 'like' | 'laugh' | 'hug' | 'heart' | 'wow';
@@ -10,6 +9,9 @@ export interface UserSession {
   isModerated: boolean;
   expiresAt: number;
   preferredLanguage: string;
+  coins: number;
+  purchasedCoins: number;
+  lastResetAt: number;
 }
 
 export interface SignalingMessage {
@@ -36,7 +38,8 @@ export enum AppState {
   IDLE = 'IDLE',
   MATCHMAKING = 'MATCHMAKING',
   CONNECTED = 'CONNECTED',
-  DISCONNECTED = 'DISCONNECTED'
+  DISCONNECTED = 'DISCONNECTED',
+  EXHAUSTED = 'EXHAUSTED'
 }
 
 export const REGION_LABELS: Record<Region, string> = {
@@ -58,7 +61,6 @@ export const REACTION_EMOJIS: Record<ReactionType, string> = {
   wow: '😮'
 };
 
-// Added missing REPORT_REASONS constant to fix compilation error in ReportModal.tsx
 export const REPORT_REASONS = [
   { id: 'nudity', label: 'Nudity or Sexual Content' },
   { id: 'violence', label: 'Violence or Gore' },
@@ -67,3 +69,6 @@ export const REPORT_REASONS = [
   { id: 'spam', label: 'Spam or Scam' },
   { id: 'other', label: 'Other' }
 ];
+
+export const COST_PER_CALL = 10;
+export const DAILY_ALLOWANCE = 250;
