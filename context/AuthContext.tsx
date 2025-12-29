@@ -14,7 +14,7 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-const AUTH_STORAGE_KEY = 'YOLO_MOCK_AUTH_V1';
+const AUTH_STORAGE_KEY = 'YOLO_MOCK_AUTH_V2';
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<{ email: string; uid: string } | null>(null);
@@ -42,24 +42,26 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const signIn = async (email: string) => {
-    // In mock mode, we just check if this email exists in our simple simulated store
-    // For now, we'll just treat any email as "found" or "created"
     const uid = `mock_uid_${Math.random().toString(36).substring(7)}`;
     const newProfile: UserProfile = {
       uid,
       email,
+      username: `Operator_${uid.substring(9, 13).toUpperCase()}`,
+      primaryAvatar: null,
       photos: [],
       primaryPhotoIndex: 0,
       bio: '',
       allowFriendRequests: true,
       revealPhotosToFriendsOnly: true,
-      friends: []
+      friends: [],
+      revealRule: 'manual',
+      revealTimeMinutes: 5
     };
     saveAuth(email, uid, newProfile);
   };
 
   const signUp = async (email: string) => {
-    await signIn(email); // Mock signUp behaves the same as signIn
+    await signIn(email);
   };
 
   const logout = () => {

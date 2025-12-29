@@ -2,6 +2,8 @@ export type Region = 'global' | 'us-east' | 'us-west' | 'europe' | 'asia' | 'sou
 
 export type ReactionType = 'like' | 'laugh' | 'hug' | 'heart' | 'wow';
 
+export type RevealRule = 'mutual' | 'time' | 'manual';
+
 export interface UserSession {
   id: string;
   token: string;
@@ -17,12 +19,16 @@ export interface UserSession {
 export interface UserProfile {
   uid: string;
   email: string;
+  username: string;
+  primaryAvatar: string | null;
   photos: string[];
   primaryPhotoIndex: number;
   bio: string;
   allowFriendRequests: boolean;
   revealPhotosToFriendsOnly: boolean;
   friends: string[];
+  revealRule: RevealRule;
+  revealTimeMinutes: number;
 }
 
 export interface SignalingMessage {
