@@ -16,13 +16,26 @@ export interface UserSession {
   lastResetAt: number;
 }
 
+export interface UserFile {
+  id: string;
+  name: string;
+  mimeType: string;
+  size: number;
+  url: string;
+  storagePath: string;
+  createdAt: number;
+  notes: string;
+  aiSummary: string;
+}
+
 export interface UserProfile {
   uid: string;
   email: string;
-  username: string;
-  primaryAvatar: string | null;
-  photos: string[];
-  primaryPhotoIndex: number;
+  name: string;
+  Profile_photo: string | null;
+  Display_Pic1: string | null;
+  Display_Pic2: string | null;
+  Display_Pic3: string | null;
   bio: string;
   allowFriendRequests: boolean;
   revealPhotosToFriendsOnly: boolean;

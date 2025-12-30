@@ -1,9 +1,8 @@
-
 import { useEffect, useRef } from 'react';
 import { GoogleGenAI, Type } from "@google/genai";
 import { useSession } from '../context/SessionContext';
 
-const MODERATION_INTERVAL = 12000; // slightly longer to prevent rate limiting
+const MODERATION_INTERVAL = 12000; 
 
 export const useModeration = (stream: MediaStream | null) => {
   const { updateSession } = useSession();
@@ -44,11 +43,8 @@ export const useModeration = (stream: MediaStream | null) => {
       try {
         ctx.drawImage(v, 0, 0, cvs.width, cvs.height);
         const base64Data = cvs.toDataURL('image/jpeg', 0.5).split(',')[1];
-        const apiKey = process.env.API_KEY || '';
         
-        if (!apiKey) return;
-
-        const ai = new GoogleGenAI({ apiKey });
+        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
         const response = await ai.models.generateContent({
           model: 'gemini-3-flash-preview',
           contents: {
@@ -65,6 +61,7 @@ export const useModeration = (stream: MediaStream | null) => {
             ]
           },
           config: {
+            systemInstruction: "You are a specialized moderation engine. You receive a Firebase UID from the client. Firebase Authentication is the source of truth for identity. Do not generate, infer, or store usernames or profile images. Do not modify identity data.",
             responseMimeType: "application/json",
             responseSchema: {
               type: Type.OBJECT,

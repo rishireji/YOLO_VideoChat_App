@@ -1,96 +1,355 @@
+
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { UserProfile } from '../types';
+// Use compatibility imports to resolve missing modular export errors in specific build environments
+import firebase from 'firebase/compat/app';
+import 'firebase/compat/auth';
+import 'firebase/compat/firestore';
+import 'firebase/compat/storage';
+import { UserProfile, UserFile } from '../types';
+import { GoogleGenAI } from "@google/genai";
+
+// YOLO Production Firebase Configuration
+const firebaseConfig = {
+  apiKey: "AIzaSyDgVumOW56U2NeWWJjHPr7gdya6KWSvnDI",
+  authDomain: "yolo-videochat.firebaseapp.com",
+  projectId: "yolo-videochat",
+  storageBucket: "gs://yolo-videochat.firebasestorage.app",
+  messagingSenderId: "437252324088",
+  appId: "1:437252324088:web:2681b9faee9ac95fc1990d",
+  measurementId: "G-80GD9TKFDL"
+};
+
+// Initialize Firebase using the compatibility layer
+if (!firebase.apps.length) {
+  firebase.initializeApp(firebaseConfig);
+}
+const auth = firebase.auth();
+const db = firebase.firestore();
+// Use the requested bucket explicitly
+const storage = firebase.app().storage('gs://yolo-videochat.firebasestorage.app');
+
+// Enable Firestore Offline Persistence
+db.enablePersistence({ synchronizeTabs: true }).catch((err) => {
+  if (err.code === 'failed-precondition') {
+    console.warn('[YOLO Auth] Firestore persistence failed: Multiple tabs open');
+  } else if (err.code === 'unimplemented') {
+    console.warn('[YOLO Auth] Firestore persistence is not available in this browser');
+  }
+});
+
+/**
+ * Optimizes an image to fit within performance budgets.
+ */
+const optimizeImage = (base64Str: string): Promise<string> => {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.src = base64Str;
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      const MAX_SIZE = 512; 
+      let width = img.width;
+      let height = img.height;
+
+      if (width > height) {
+        if (width > MAX_SIZE) {
+          height *= MAX_SIZE / width;
+          width = MAX_SIZE;
+        }
+      } else {
+        if (height > MAX_SIZE) {
+          width *= MAX_SIZE / height;
+          height = MAX_SIZE;
+        }
+      }
+
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL('image/jpeg', 0.8));
+      } else {
+        resolve(base64Str);
+      }
+    };
+    img.onerror = () => resolve(base64Str);
+  });
+};
+
+/**
+ * Helper to upload a profile or display photo to storage to avoid Firestore 1MB document limit.
+ */
+const uploadUserImage = async (uid: string, base64: string, fileName: string): Promise<string> => {
+  const optimized = await optimizeImage(base64);
+  const response = await fetch(optimized);
+  const blob = await response.blob();
+  const ref = storage.ref(`user_uploads/${uid}/${fileName}`);
+  await ref.put(blob);
+  return await ref.getDownloadURL();
+};
 
 interface AuthContextType {
-  user: { email: string; uid: string } | null;
+  user: { 
+    email: string; 
+    uid: string; 
+    displayName: string | null; 
+    photoURL: string | null; 
+    emailVerified: boolean;
+  } | null;
   profile: UserProfile | null;
+  files: UserFile[];
   loading: boolean;
-  signIn: (email: string) => Promise<void>;
-  signUp: (email: string) => Promise<void>;
+  signIn: (email: string, pass: string) => Promise<void>;
+  signUp: (email: string, pass: string, displayName: string, photo: string | null) => Promise<void>;
+  sendPasswordReset: (email: string) => Promise<void>;
   logout: () => void;
-  updateProfile: (updates: Partial<UserProfile>) => void;
+  updateProfile: (updates: Partial<UserProfile>) => Promise<void>;
   deleteAccount: () => void;
+  uploadVaultFile: (file: File, notes?: string) => Promise<void>;
+  deleteVaultFile: (fileId: string, storagePath: string) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-const AUTH_STORAGE_KEY = 'YOLO_MOCK_AUTH_V2';
-
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [user, setUser] = useState<{ email: string; uid: string } | null>(null);
+  const [user, setUser] = useState<AuthContextType['user'] | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [files, setFiles] = useState<UserFile[]>([]);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    const savedAuth = localStorage.getItem(AUTH_STORAGE_KEY);
-    if (savedAuth) {
+  const syncUserWithFirestore = async (uid: string, email: string, initialData?: Partial<UserProfile>) => {
+    try {
+      const userDocRef = db.collection('Users').doc(uid);
+      
+      let doc;
       try {
-        const data = JSON.parse(savedAuth);
-        setUser({ email: data.email, uid: data.uid });
-        setProfile(data.profile);
-      } catch (e) {
-        localStorage.removeItem(AUTH_STORAGE_KEY);
+        doc = await userDocRef.get();
+      } catch (getErr: any) {
+        if (getErr.code === 'permission-denied') return;
+        throw getErr;
       }
+      
+      if (!doc.exists) {
+        const newProfile: UserProfile = {
+          uid, email,
+          name: initialData?.name || `Anon_${uid.substring(0, 4).toUpperCase()}`,
+          Profile_photo: initialData?.Profile_photo || null,
+          Display_Pic1: null, Display_Pic2: null, Display_Pic3: null,
+          bio: '', allowFriendRequests: true, revealPhotosToFriendsOnly: true,
+          friends: [], revealRule: 'manual', revealTimeMinutes: 5
+        };
+        await userDocRef.set(newProfile);
+        setProfile(newProfile);
+      } else {
+        setProfile(doc.data() as UserProfile);
+      }
+
+      const unsubFiles = userDocRef.collection('files').orderBy('createdAt', 'desc').onSnapshot(
+        snap => {
+          const fileList: UserFile[] = [];
+          snap.forEach(d => fileList.push(d.data() as UserFile));
+          setFiles(fileList);
+        },
+        err => {
+          console.warn("[YOLO Auth] Firestore Snapshot Listener Error:", err.message);
+        }
+      );
+
+      return unsubFiles;
+    } catch (error) {
+      console.error("[YOLO Auth] Error syncing Firestore profile:", error);
     }
-    setLoading(false);
+  };
+
+  useEffect(() => {
+    let unsubFiles: (() => void) | undefined;
+
+    const unsubscribeAuth = auth.onAuthStateChanged(async (firebaseUser) => {
+      if (firebaseUser && firebaseUser.email && firebaseUser.emailVerified) {
+        setUser({ 
+          email: firebaseUser.email, 
+          uid: firebaseUser.uid,
+          displayName: firebaseUser.displayName,
+          photoURL: firebaseUser.photoURL,
+          emailVerified: firebaseUser.emailVerified
+        });
+        unsubFiles = await syncUserWithFirestore(firebaseUser.uid, firebaseUser.email);
+      } else {
+        setUser(null);
+        setProfile(null);
+        setFiles([]);
+        if (unsubFiles) unsubFiles();
+      }
+      setLoading(false);
+    });
+
+    return () => {
+      unsubscribeAuth();
+      if (unsubFiles) unsubFiles();
+    };
   }, []);
 
-  const saveAuth = (email: string, uid: string, prof: UserProfile) => {
-    localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify({ email, uid, profile: prof }));
-    setUser({ email, uid });
-    setProfile(prof);
-  };
+  const uploadVaultFile = async (file: File, notes: string = '') => {
+    if (!user) return;
+    
+    const fileId = crypto.randomUUID();
+    const storagePath = `user_uploads/${user.uid}/${fileId}_${file.name}`;
+    const storageRef = storage.ref(storagePath);
+    
+    await storageRef.put(file);
+    const downloadURL = await storageRef.getDownloadURL();
 
-  const signIn = async (email: string) => {
-    const uid = `mock_uid_${Math.random().toString(36).substring(7)}`;
-    const newProfile: UserProfile = {
-      uid,
-      email,
-      username: `Operator_${uid.substring(9, 13).toUpperCase()}`,
-      primaryAvatar: null,
-      photos: [],
-      primaryPhotoIndex: 0,
-      bio: '',
-      allowFriendRequests: true,
-      revealPhotosToFriendsOnly: true,
-      friends: [],
-      revealRule: 'manual',
-      revealTimeMinutes: 5
+    let aiSummary = "Processing intelligence...";
+    try {
+      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+      const response = await ai.models.generateContent({
+        model: 'gemini-3-flash-preview',
+        contents: `Provide a concise, technical summary for a file named "${file.name}" of type "${file.type}". If this looks like a sensitive document, warn the user to encrypt it. Context: This is part of an anonymous ephemeral vault.`,
+      });
+      aiSummary = response.text || "No summary could be generated.";
+    } catch (err) {
+      aiSummary = "Summary temporarily unavailable.";
+    }
+
+    const fileData: UserFile = {
+      id: fileId,
+      name: file.name,
+      mimeType: file.type || 'application/octet-stream',
+      size: file.size,
+      url: downloadURL,
+      storagePath: storagePath,
+      createdAt: Date.now(),
+      notes,
+      aiSummary
     };
-    saveAuth(email, uid, newProfile);
+
+    await db.collection('Users').doc(user.uid).collection('files').doc(fileId).set(fileData);
   };
 
-  const signUp = async (email: string) => {
-    await signIn(email);
+  const deleteVaultFile = async (fileId: string, storagePath: string) => {
+    if (!user) return;
+    try {
+      await storage.ref(storagePath).delete();
+    } catch (err) {}
+    await db.collection('Users').doc(user.uid).collection('files').doc(fileId).delete();
   };
 
-  const logout = () => {
-    localStorage.removeItem(AUTH_STORAGE_KEY);
+  const signIn = async (email: string, pass: string) => {
+    const credential = await auth.signInWithEmailAndPassword(email, pass);
+    const u = credential.user;
+    if (u && u.email) {
+      if (!u.emailVerified) {
+        await u.sendEmailVerification();
+        await auth.signOut();
+        const error = new Error("EMAIL_NOT_VERIFIED");
+        (error as any).email = u.email;
+        throw error;
+      }
+      setUser({ email: u.email, uid: u.uid, displayName: u.displayName, photoURL: u.photoURL, emailVerified: u.emailVerified });
+      await syncUserWithFirestore(u.uid, u.email);
+    }
+  };
+
+  const signUp = async (email: string, pass: string, displayName: string, photo: string | null) => {
+    const credential = await auth.createUserWithEmailAndPassword(email, pass);
+    const u = credential.user;
+    if (u) {
+      let photoURL = null;
+      if (photo) {
+        photoURL = await uploadUserImage(u.uid, photo, 'profile_identity.jpg');
+      }
+      
+      await u.updateProfile({
+        displayName: displayName || `Anon_${u.uid.substring(0, 4)}`,
+        photoURL: photoURL
+      });
+
+      await syncUserWithFirestore(u.uid, email, { name: displayName, Profile_photo: photoURL });
+      await u.sendEmailVerification();
+      await auth.signOut();
+      
+      const error = new Error("EMAIL_NOT_VERIFIED");
+      (error as any).email = email;
+      throw error;
+    }
+  };
+
+  const sendPasswordReset = async (email: string) => {
+    await auth.sendPasswordResetEmail(email);
+  };
+
+  const logout = async () => {
+    await auth.signOut();
     setUser(null);
     setProfile(null);
+    setFiles([]);
   };
 
-  const updateProfile = (updates: Partial<UserProfile>) => {
-    if (!profile || !user) return;
-    const newProfile = { ...profile, ...updates };
-    setProfile(newProfile);
-    saveAuth(user.email, user.uid, newProfile);
+  const updateProfile = async (updates: Partial<UserProfile>) => {
+    if (!profile || !user || !auth.currentUser) return;
+
+    try {
+      let firestoreUpdates: any = { ...updates };
+
+      // Handle images to avoid document size limit (1MB)
+      const imageFields = ['Profile_photo', 'Display_Pic1', 'Display_Pic2', 'Display_Pic3'];
+      
+      for (const field of imageFields) {
+        const val = updates[field as keyof UserProfile];
+        if (typeof val === 'string' && val.startsWith('data:')) {
+          const fileName = `${field.toLowerCase()}.jpg`;
+          const url = await uploadUserImage(user.uid, val, fileName);
+          firestoreUpdates[field] = url;
+          
+          if (field === 'Profile_photo') {
+            await auth.currentUser.updateProfile({ photoURL: url });
+            setUser(prev => prev ? ({ ...prev, photoURL: url }) : null);
+          }
+        }
+      }
+
+      if (updates.name !== undefined) {
+        await auth.currentUser.updateProfile({ displayName: updates.name });
+        setUser(prev => prev ? ({ ...prev, displayName: updates.name || null }) : null);
+      }
+
+      const newProfile = { ...profile, ...firestoreUpdates };
+      setProfile(newProfile);
+      
+      await db.collection('Users').doc(user.uid).update(firestoreUpdates);
+    } catch (error: any) {
+      console.error("[YOLO Auth] Update Profile Error:", error);
+      throw error;
+    }
   };
 
-  const deleteAccount = () => {
-    logout();
-  };
+  const deleteAccount = async () => {
+    if (!user || !auth.currentUser) return;
+    const uid = user.uid;
+    try {
+      const fileSnap = await db.collection('Users').doc(uid).collection('files').get();
+      for (const f of fileSnap.docs) {
+        const fileData = f.data() as UserFile;
+        await storage.ref(fileData.storagePath).delete().catch(() => {});
+        await f.ref.delete();
+      }
+      // Also clean up profile images
+      const imageFields = ['profile_identity.jpg', 'profile_photo.jpg', 'display_pic1.jpg', 'display_pic2.jpg', 'display_pic3.jpg'];
+      for (const img of imageFields) {
+        await storage.ref(`user_uploads/${uid}/${img}`).delete().catch(() => {});
+      }
 
+      await db.collection('Users').doc(uid).delete();
+      await auth.currentUser.delete();
+      await logout();
+    } catch (err) {
+      throw new Error("Purge failed. Re-authenticate to delete records.");
+    }
+  };
   return (
     <AuthContext.Provider value={{ 
-      user, 
-      profile, 
-      loading, 
-      signIn, 
-      signUp, 
-      logout, 
-      updateProfile, 
-      deleteAccount 
+      user, profile, files, loading, signIn, signUp, sendPasswordReset, logout, updateProfile, deleteAccount,
+      uploadVaultFile, deleteVaultFile
     }}>
       {children}
     </AuthContext.Provider>
