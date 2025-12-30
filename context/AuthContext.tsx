@@ -147,7 +147,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const unsubFiles = userDocRef.collection('files').orderBy('createdAt', 'desc').onSnapshot(
   (snap: firebase.firestore.QuerySnapshot) => {
     const fileList: UserFile[] = [];
-    snap.forEach((d) => {
+    snap.forEach((d: firebase.firestore.QueryDocumentSnapshot) => {
       fileList.push(d.data() as UserFile);
     });
     setFiles(fileList);
