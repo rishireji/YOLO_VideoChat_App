@@ -29,7 +29,7 @@ const db = firebase.firestore();
 const storage = firebase.app().storage('gs://yolo-videochat.firebasestorage.app');
 
 // Enable Firestore Offline Persistence
-db.enablePersistence({ synchronizeTabs: true }).catch((err) => {
+db.enablePersistence({ synchronizeTabs: true }).catch((err: firebase.firestore.FirestoreError) => {
   if (err.code === 'failed-precondition') {
     console.warn('[YOLO Auth] Firestore persistence failed: Multiple tabs open');
   } else if (err.code === 'unimplemented') {
@@ -144,16 +144,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setProfile(doc.data() as UserProfile);
       }
 
-      const unsubFiles = userDocRef.collection('files').orderBy('createdAt', 'desc').onSnapshot(
-        snap => {
-          const fileList: UserFile[] = [];
-          snap.forEach(d => fileList.push(d.data() as UserFile));
-          setFiles(fileList);
-        },
-        err => {
-          console.warn("[YOLO Auth] Firestore Snapshot Listener Error:", err.message);
-        }
-      );
+      const unsubFiles = userDocRef.collection('files').orderBy('createdAt', 'desc')..onSnapshot(
+  (snap: firebase.firestore.QuerySnapshot) => {
+    const fileList: UserFile[] = [];
+    snap.forEach((d: firebase.firestore.QueryDocumentSnapshot) => {
+      fileList.push(d.data() as UserFile);
+    });
+    setFiles(fileList);
+  },
+  (err: firebase.firestore.FirestoreError) => {
+    console.warn("[YOLO Auth] Firestore Snapshot Listener Error:", err.message);
+  }
+);
+
 
       return unsubFiles;
     } catch (error) {
@@ -164,7 +167,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   useEffect(() => {
     let unsubFiles: (() => void) | undefined;
 
-    const unsubscribeAuth = auth.onAuthStateChanged(async (firebaseUser) => {
+    const unsubscribeAuth = auth.onAuthStateChanged(async (firebaseUser: firebase.User | null) => {
       if (firebaseUser && firebaseUser.email && firebaseUser.emailVerified) {
         setUser({ 
           email: firebaseUser.email, 
