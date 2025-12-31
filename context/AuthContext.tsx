@@ -1,4 +1,3 @@
-
 import React, { createContext, useContext, useState, useEffect } from 'react';
 // Use compatibility imports to resolve missing modular export errors in specific build environments
 import firebase from 'firebase/compat/app';
@@ -19,16 +18,13 @@ const firebaseConfig = {
   measurementId: "G-80GD9TKFDL"
 };
 
-// Initialize Firebase using the compatibility layer
 if (!firebase.apps.length) {
   firebase.initializeApp(firebaseConfig);
 }
 const auth = firebase.auth();
 const db = firebase.firestore();
-// Use the requested bucket explicitly
 const storage = firebase.app().storage('gs://yolo-videochat.firebasestorage.app');
 
-// Enable Firestore Offline Persistence
 db.enablePersistence({ synchronizeTabs: true }).catch((err: firebase.firestore.FirestoreError) => {
   if (err.code === 'failed-precondition') {
     console.warn('[YOLO Auth] Firestore persistence failed: Multiple tabs open');
@@ -37,9 +33,6 @@ db.enablePersistence({ synchronizeTabs: true }).catch((err: firebase.firestore.F
   }
 });
 
-/**
- * Optimizes an image to fit within performance budgets.
- */
 const optimizeImage = (base64Str: string): Promise<string> => {
   return new Promise((resolve) => {
     const img = new Image();
@@ -51,15 +44,9 @@ const optimizeImage = (base64Str: string): Promise<string> => {
       let height = img.height;
 
       if (width > height) {
-        if (width > MAX_SIZE) {
-          height *= MAX_SIZE / width;
-          width = MAX_SIZE;
-        }
+        if (width > MAX_SIZE) { height *= MAX_SIZE / width; width = MAX_SIZE; }
       } else {
-        if (height > MAX_SIZE) {
-          width *= MAX_SIZE / height;
-          height = MAX_SIZE;
-        }
+        if (height > MAX_SIZE) { width *= MAX_SIZE / height; height = MAX_SIZE; }
       }
 
       canvas.width = width;
@@ -76,9 +63,6 @@ const optimizeImage = (base64Str: string): Promise<string> => {
   });
 };
 
-/**
- * Helper to upload a profile or display photo to storage to avoid Firestore 1MB document limit.
- */
 const uploadUserImage = async (uid: string, base64: string, fileName: string): Promise<string> => {
   const optimized = await optimizeImage(base64);
   const response = await fetch(optimized);
@@ -97,6 +81,7 @@ interface AuthContextType {
     emailVerified: boolean;
   } | null;
   profile: UserProfile | null;
+  friendProfiles: UserProfile[];
   files: UserFile[];
   loading: boolean;
   signIn: (email: string, pass: string) => Promise<void>;
@@ -104,6 +89,7 @@ interface AuthContextType {
   sendPasswordReset: (email: string) => Promise<void>;
   logout: () => void;
   updateProfile: (updates: Partial<UserProfile>) => Promise<void>;
+  addFriend: (userA: string, userB: string) => Promise<void>;
   deleteAccount: () => void;
   uploadVaultFile: (file: File, notes?: string) => Promise<void>;
   deleteVaultFile: (fileId: string, storagePath: string) => Promise<void>;
@@ -114,8 +100,52 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<AuthContextType['user'] | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [friendProfiles, setFriendProfiles] = useState<UserProfile[]>([]);
   const [files, setFiles] = useState<UserFile[]>([]);
   const [loading, setLoading] = useState(true);
+
+  // Friend sync using subcollection
+  useEffect(() => {
+    if (!user) {
+      setFriendProfiles([]);
+      return;
+    }
+
+    const unsubscribe = db
+      .collection('Users')
+      .doc(user.uid)
+      .collection('friends')
+      .onSnapshot(async (snap) => {
+        const friendUids = snap.docs.map(doc => doc.id);
+
+        if (friendUids.length === 0) {
+          setFriendProfiles([]);
+          return;
+        }
+
+        const resolved: UserProfile[] = [];
+        // Firestore limits "in" queries to 30 items
+        const chunks: string[][] = [];
+        for (let i = 0; i < friendUids.length; i += 30) {
+          chunks.push(friendUids.slice(i, i + 30));
+        }
+
+        for (const chunk of chunks) {
+          const q = await db
+            .collection('Users')
+            .where(firebase.firestore.FieldPath.documentId(), 'in', chunk)
+            .get();
+
+          q.forEach(doc => resolved.push(doc.data() as UserProfile));
+        }
+
+        setFriendProfiles(resolved);
+      }, (err) => {
+        console.warn('[YOLO Auth] Friend listener error:', err.message);
+      });
+
+    return () => unsubscribe();
+  }, [user?.uid]);
 
   const syncUserWithFirestore = async (uid: string, email: string, initialData?: Partial<UserProfile>) => {
     try {
@@ -136,27 +166,27 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           Profile_photo: initialData?.Profile_photo || null,
           Display_Pic1: null, Display_Pic2: null, Display_Pic3: null,
           bio: '', allowFriendRequests: true, revealPhotosToFriendsOnly: true,
-          friends: [], revealRule: 'manual', revealTimeMinutes: 5
+          revealRule: 'manual', revealTimeMinutes: 5
         };
         await userDocRef.set(newProfile);
         setProfile(newProfile);
       } else {
-        setProfile(doc.data() as UserProfile);
+        const data = doc.data() as UserProfile;
+        setProfile(data);
       }
 
       const unsubFiles = userDocRef.collection('files').orderBy('createdAt', 'desc').onSnapshot(
-  (snap: firebase.firestore.QuerySnapshot) => {
-    const fileList: UserFile[] = [];
-    snap.forEach((d: firebase.firestore.QueryDocumentSnapshot) => {
-      fileList.push(d.data() as UserFile);
-    });
-    setFiles(fileList);
-  },
-  (err: firebase.firestore.FirestoreError) => {
-    console.warn("[YOLO Auth] Firestore Snapshot Listener Error:", err.message);
-  }
-);
-
+        (snap: firebase.firestore.QuerySnapshot) => {
+          const fileList: UserFile[] = [];
+          snap.forEach((d: firebase.firestore.QueryDocumentSnapshot) => {
+            fileList.push(d.data() as UserFile);
+          });
+          setFiles(fileList);
+        },
+        (err: firebase.firestore.FirestoreError) => {
+          console.warn("[YOLO Auth] Firestore Snapshot Listener Error:", err.message);
+        }
+      );
 
       return unsubFiles;
     } catch (error) {
@@ -180,6 +210,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       } else {
         setUser(null);
         setProfile(null);
+        setFriendProfiles([]);
         setFiles([]);
         if (unsubFiles) unsubFiles();
       }
@@ -194,11 +225,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const uploadVaultFile = async (file: File, notes: string = '') => {
     if (!user) return;
-    
     const fileId = crypto.randomUUID();
     const storagePath = `user_uploads/${user.uid}/${fileId}_${file.name}`;
     const storageRef = storage.ref(storagePath);
-    
     await storageRef.put(file);
     const downloadURL = await storageRef.getDownloadURL();
 
@@ -231,9 +260,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const deleteVaultFile = async (fileId: string, storagePath: string) => {
     if (!user) return;
-    try {
-      await storage.ref(storagePath).delete();
-    } catch (err) {}
+    try { await storage.ref(storagePath).delete(); } catch (err) {}
     await db.collection('Users').doc(user.uid).collection('files').doc(fileId).delete();
   };
 
@@ -258,67 +285,60 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const u = credential.user;
     if (u) {
       let photoURL = null;
-      if (photo) {
-        photoURL = await uploadUserImage(u.uid, photo, 'profile_identity.jpg');
-      }
-      
-      await u.updateProfile({
-        displayName: displayName || `Anon_${u.uid.substring(0, 4)}`,
-        photoURL: photoURL
-      });
-
+      if (photo) { photoURL = await uploadUserImage(u.uid, photo, 'profile_identity.jpg'); }
+      await u.updateProfile({ displayName: displayName || `Anon_${u.uid.substring(0, 4)}`, photoURL: photoURL });
       await syncUserWithFirestore(u.uid, email, { name: displayName, Profile_photo: photoURL });
       await u.sendEmailVerification();
       await auth.signOut();
-      
       const error = new Error("EMAIL_NOT_VERIFIED");
       (error as any).email = email;
       throw error;
     }
   };
 
-  const sendPasswordReset = async (email: string) => {
-    await auth.sendPasswordResetEmail(email);
-  };
+  const sendPasswordReset = async (email: string) => { await auth.sendPasswordResetEmail(email); };
 
   const logout = async () => {
     await auth.signOut();
     setUser(null);
     setProfile(null);
+    setFriendProfiles([]);
     setFiles([]);
+  };
+
+  const addFriend = async (userA: string, userB: string) => {
+    const batch = db.batch();
+    const refA = db.collection('Users').doc(userA).collection('friends').doc(userB);
+    const refB = db.collection('Users').doc(userB).collection('friends').doc(userA);
+    const data = { connectedAt: Date.now() };
+    batch.set(refA, data);
+    batch.set(refB, data);
+    await batch.commit();
   };
 
   const updateProfile = async (updates: Partial<UserProfile>) => {
     if (!profile || !user || !auth.currentUser) return;
-
     try {
       let firestoreUpdates: any = { ...updates };
-
-      // Handle images to avoid document size limit (1MB)
       const imageFields = ['Profile_photo', 'Display_Pic1', 'Display_Pic2', 'Display_Pic3'];
-      
       for (const field of imageFields) {
         const val = updates[field as keyof UserProfile];
         if (typeof val === 'string' && val.startsWith('data:')) {
           const fileName = `${field.toLowerCase()}.jpg`;
           const url = await uploadUserImage(user.uid, val, fileName);
           firestoreUpdates[field] = url;
-          
           if (field === 'Profile_photo') {
             await auth.currentUser.updateProfile({ photoURL: url });
             setUser(prev => prev ? ({ ...prev, photoURL: url }) : null);
           }
         }
       }
-
       if (updates.name !== undefined) {
         await auth.currentUser.updateProfile({ displayName: updates.name });
         setUser(prev => prev ? ({ ...prev, displayName: updates.name || null }) : null);
       }
-
       const newProfile = { ...profile, ...firestoreUpdates };
       setProfile(newProfile);
-      
       await db.collection('Users').doc(user.uid).update(firestoreUpdates);
     } catch (error: any) {
       console.error("[YOLO Auth] Update Profile Error:", error);
@@ -336,22 +356,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         await storage.ref(fileData.storagePath).delete().catch(() => {});
         await f.ref.delete();
       }
-      // Also clean up profile images
       const imageFields = ['profile_identity.jpg', 'profile_photo.jpg', 'display_pic1.jpg', 'display_pic2.jpg', 'display_pic3.jpg'];
-      for (const img of imageFields) {
-        await storage.ref(`user_uploads/${uid}/${img}`).delete().catch(() => {});
-      }
-
+      for (const img of imageFields) { await storage.ref(`user_uploads/${uid}/${img}`).delete().catch(() => {}); }
       await db.collection('Users').doc(uid).delete();
       await auth.currentUser.delete();
       await logout();
-    } catch (err) {
-      throw new Error("Purge failed. Re-authenticate to delete records.");
-    }
+    } catch (err) { throw new Error("Purge failed. Re-authenticate to delete records."); }
   };
+
   return (
     <AuthContext.Provider value={{ 
-      user, profile, files, loading, signIn, signUp, sendPasswordReset, logout, updateProfile, deleteAccount,
+      user, profile, friendProfiles, files, loading, signIn, signUp, sendPasswordReset, logout, updateProfile, addFriend, deleteAccount,
       uploadVaultFile, deleteVaultFile
     }}>
       {children}

@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { AppState, ChatMessage, REGION_LABELS, ReactionType, REACTION_EMOJIS, COST_PER_CALL } from '../types';
 import { VideoFeed } from './VideoFeed';
@@ -26,7 +25,7 @@ interface FloatingReaction {
 
 export const ChatRoom: React.FC<ChatRoomProps> = ({ onExit }) => {
   const { session, deductCoins } = useSession();
-  const { user, profile, updateProfile } = useAuth();
+  const { user, profile, addFriend } = useAuth();
   const { translateText } = useTranslation();
   const [appState, setAppState] = useState<AppState>(AppState.MATCHMAKING);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -34,9 +33,9 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ onExit }) => {
   const [activeReactions, setActiveReactions] = useState<FloatingReaction[]>([]);
   const [isUserActive, setIsUserActive] = useState(true);
   const [friendRequestStatus, setFriendRequestStatus] = useState<'none' | 'sent' | 'received' | 'accepted'>('none');
+  const [requesterUid, setRequesterUid] = useState<string | null>(null);
   const hasDeductedRef = useRef<string | null>(null);
 
-  // Define isConnected for use in Friend Request UI and other conditional rendering
   const isConnected = appState === AppState.CONNECTED;
 
   const handleReactionReceived = useCallback((type: ReactionType) => {
@@ -93,28 +92,25 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ onExit }) => {
     sendSignal
   } = useWebRTC(session?.region || 'global', handleReactionReceived, handleMessageReceived);
 
-  // Handle Inbound Signaling (Friend Requests)
   useEffect(() => {
     const handleSignal = (e: any) => {
       const msg = e.detail;
       if (msg.type === 'friend_request' && user) {
         setFriendRequestStatus('received');
+        setRequesterUid(msg.payload.uid);
         setMessages(prev => [...prev, {
           id: 'sys-req-' + Date.now(),
           senderId: 'system',
-          text: "You have received a friend request! Reveal your identity to connect.",
+          text: "Protocol Insight: Handshake request received. Reveal identity?",
           timestamp: Date.now()
         }]);
       } else if (msg.type === 'friend_accept' && user) {
         setFriendRequestStatus('accepted');
-        if (profile && msg.payload?.uid) {
-           updateProfile({ friends: [...profile.friends, msg.payload.uid] });
-        }
       }
     };
     window.addEventListener('rtc_signal', handleSignal);
     return () => window.removeEventListener('rtc_signal', handleSignal);
-  }, [user, profile, updateProfile]);
+  }, [user]);
 
   useModeration(localStream);
 
@@ -163,6 +159,7 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ onExit }) => {
       case 'signaling_offline':
         setAppState(AppState.MATCHMAKING);
         setFriendRequestStatus('none');
+        setRequesterUid(null);
         break;
       case 'connected':
         setAppState(AppState.CONNECTED);
@@ -186,17 +183,20 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ onExit }) => {
   }, [session, skip]);
 
   const handleSendFriendRequest = () => {
-    if (!user) return; // Should be handled by UI visibility
+    if (!user) return;
     sendSignal({ type: 'friend_request', senderId: user.uid, payload: { uid: user.uid } });
     setFriendRequestStatus('sent');
   };
 
-  const handleAcceptFriendRequest = () => {
-    if (!user || !profile) return;
-    sendSignal({ type: 'friend_accept', senderId: user.uid, payload: { uid: user.uid } });
-    setFriendRequestStatus('accepted');
-    // Simulated friend addition
-    updateProfile({ friends: [...profile.friends, 'remote_peer_id_placeholder'] });
+  const handleAcceptFriendRequest = async () => {
+    if (!user || !requesterUid) return;
+    try {
+      await addFriend(user.uid, requesterUid);
+      sendSignal({ type: 'friend_accept', senderId: user.uid, payload: { uid: user.uid } });
+      setFriendRequestStatus('accepted');
+    } catch (err) {
+      console.error("[YOLO Social] Handshake failed:", err);
+    }
   };
 
   return (
@@ -211,7 +211,6 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ onExit }) => {
           
           <VideoFeed stream={remoteStream} isRemote label="Stranger" />
 
-          {/* Incoming Reactions */}
           <div className="absolute inset-0 pointer-events-none overflow-hidden z-20">
             {activeReactions.filter(r => !r.isLocal).map(reaction => (
               <div key={reaction.id} className="absolute bottom-0 text-5xl md:text-8xl animate-[floatUpEnhanced_2.5s_ease-out_forwards]" style={{ left: `${reaction.x}%`, '--rotation': `${reaction.rotation}deg` } as any}>
@@ -220,7 +219,6 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ onExit }) => {
             ))}
           </div>
           
-          {/* Local PiP */}
           <div className="absolute top-6 left-6 w-32 md:w-56 aspect-video bg-zinc-950 rounded-2xl md:rounded-[32px] overflow-hidden shadow-2xl border border-white/10 z-30 group/pip transition-all hover:scale-105 active:scale-95 cursor-move">
             <VideoFeed stream={localStream} isRemote={false} label="You" isMuted={true} />
             <div className="absolute inset-0 pointer-events-none overflow-hidden z-10">
@@ -232,7 +230,6 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ onExit }) => {
             </div>
           </div>
 
-          {/* Friend Request UI */}
           {isConnected && user && (
             <div className="absolute top-6 right-24 z-40 animate-in fade-in slide-in-from-right-2 duration-500">
                {friendRequestStatus === 'none' && (
@@ -258,7 +255,6 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ onExit }) => {
             </div>
           )}
 
-          {/* Floating Action Cockpit */}
           <div className={`absolute bottom-8 left-1/2 -translate-x-1/2 z-50 transition-all duration-500 ${isUserActive || appState === AppState.MATCHMAKING ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4 pointer-events-none'}`}>
             <Controls 
               appState={appState} 

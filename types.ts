@@ -39,7 +39,6 @@ export interface UserProfile {
   bio: string;
   allowFriendRequests: boolean;
   revealPhotosToFriendsOnly: boolean;
-  friends: string[];
   revealRule: RevealRule;
   revealTimeMinutes: number;
 }
