@@ -1,13 +1,11 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-// Use compatibility imports to resolve missing modular export errors in specific build environments
 import firebase from 'firebase/compat/app';
 import 'firebase/compat/auth';
 import 'firebase/compat/firestore';
 import 'firebase/compat/storage';
-import { UserProfile, UserFile } from '../types';
+import { UserProfile, UserFile, FriendRequest } from '../types';
 import { GoogleGenAI } from "@google/genai";
 
-// YOLO Production Firebase Configuration
 const firebaseConfig = {
   apiKey: "AIzaSyDgVumOW56U2NeWWJjHPr7gdya6KWSvnDI",
   authDomain: "yolo-videochat.firebaseapp.com",
@@ -26,11 +24,7 @@ const db = firebase.firestore();
 const storage = firebase.app().storage('gs://yolo-videochat.firebasestorage.app');
 
 db.enablePersistence({ synchronizeTabs: true }).catch((err: firebase.firestore.FirestoreError) => {
-  if (err.code === 'failed-precondition') {
-    console.warn('[YOLO Auth] Firestore persistence failed: Multiple tabs open');
-  } else if (err.code === 'unimplemented') {
-    console.warn('[YOLO Auth] Firestore persistence is not available in this browser');
-  }
+  if (err.code === 'failed-precondition') console.warn('[YOLO Auth] Persistence failed');
 });
 
 const optimizeImage = (base64Str: string): Promise<string> => {
@@ -40,24 +34,13 @@ const optimizeImage = (base64Str: string): Promise<string> => {
     img.onload = () => {
       const canvas = document.createElement('canvas');
       const MAX_SIZE = 512; 
-      let width = img.width;
-      let height = img.height;
-
-      if (width > height) {
-        if (width > MAX_SIZE) { height *= MAX_SIZE / width; width = MAX_SIZE; }
-      } else {
-        if (height > MAX_SIZE) { width *= MAX_SIZE / height; height = MAX_SIZE; }
-      }
-
-      canvas.width = width;
-      canvas.height = height;
+      let width = img.width, height = img.height;
+      if (width > height) { if (width > MAX_SIZE) { height *= MAX_SIZE / width; width = MAX_SIZE; } }
+      else { if (height > MAX_SIZE) { width *= MAX_SIZE / height; height = MAX_SIZE; } }
+      canvas.width = width; canvas.height = height;
       const ctx = canvas.getContext('2d');
-      if (ctx) {
-        ctx.drawImage(img, 0, 0, width, height);
-        resolve(canvas.toDataURL('image/jpeg', 0.8));
-      } else {
-        resolve(base64Str);
-      }
+      if (ctx) { ctx.drawImage(img, 0, 0, width, height); resolve(canvas.toDataURL('image/jpeg', 0.8)); }
+      else resolve(base64Str);
     };
     img.onerror = () => resolve(base64Str);
   });
@@ -73,15 +56,11 @@ const uploadUserImage = async (uid: string, base64: string, fileName: string): P
 };
 
 interface AuthContextType {
-  user: { 
-    email: string; 
-    uid: string; 
-    displayName: string | null; 
-    photoURL: string | null; 
-    emailVerified: boolean;
-  } | null;
+  user: { email: string; uid: string; displayName: string | null; photoURL: string | null; emailVerified: boolean; } | null;
   profile: UserProfile | null;
   friendProfiles: UserProfile[];
+  sentRequests: FriendRequest[];
+  receivedRequests: FriendRequest[];
   files: UserFile[];
   loading: boolean;
   signIn: (email: string, pass: string) => Promise<void>;
@@ -89,7 +68,9 @@ interface AuthContextType {
   sendPasswordReset: (email: string) => Promise<void>;
   logout: () => void;
   updateProfile: (updates: Partial<UserProfile>) => Promise<void>;
-  addFriend: (userA: string, userB: string) => Promise<void>;
+  sendFriendRequest: (targetUid: string) => Promise<void>;
+  acceptFriendRequest: (targetUid: string) => Promise<void>;
+  declineFriendRequest: (targetUid: string) => Promise<void>;
   deleteAccount: () => void;
   uploadVaultFile: (file: File, notes?: string) => Promise<void>;
   deleteVaultFile: (fileId: string, storagePath: string) => Promise<void>;
@@ -101,281 +82,196 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [user, setUser] = useState<AuthContextType['user'] | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [friendProfiles, setFriendProfiles] = useState<UserProfile[]>([]);
+  const [sentRequests, setSentRequests] = useState<FriendRequest[]>([]);
+  const [receivedRequests, setReceivedRequests] = useState<FriendRequest[]>([]);
   const [files, setFiles] = useState<UserFile[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Friend sync using subcollection
-  useEffect(() => {
-    if (!user?.uid) {
-      setFriendProfiles([]);
-      return;
-    }
-
-    const unsubscribe = db
-      .collection('Users')
-      .doc(user.uid)
-      .collection('friends')
-      .onSnapshot(async (snap) => {
-        const friendUids = snap.docs.map(doc => doc.id);
-
-        if (friendUids.length === 0) {
-          setFriendProfiles([]);
-          return;
-        }
-
-        try {
-          const resolved: UserProfile[] = [];
-          // Firestore limits "in" queries to 30 items
-          const chunks: string[][] = [];
-          for (let i = 0; i < friendUids.length; i += 30) {
-            chunks.push(friendUids.slice(i, i + 30));
-          }
-
-          for (const chunk of chunks) {
-            if (chunk.length === 0) continue;
-            const q = await db
-              .collection('Users')
-              .where(firebase.firestore.FieldPath.documentId(), 'in', chunk)
-              .get();
-
-            q.forEach(doc => resolved.push(doc.data() as UserProfile));
-          }
-
-          setFriendProfiles(resolved);
-        } catch (err: any) {
-          console.error("[YOLO Auth] Friend profile resolution failed:", err.message);
-        }
-      }, (err) => {
-        console.warn('[YOLO Auth] Friend listener error:', err.message);
-      });
-
-    return () => unsubscribe();
-  }, [user?.uid]);
-
   const syncUserWithFirestore = async (uid: string, email: string, initialData?: Partial<UserProfile>) => {
-    try {
-      const userDocRef = db.collection('Users').doc(uid);
-      
-      let doc;
-      try {
-        doc = await userDocRef.get();
-      } catch (getErr: any) {
-        if (getErr.code === 'permission-denied') {
-          console.warn("[YOLO Auth] Profile read permission denied for UID:", uid);
-          return;
-        }
-        throw getErr;
-      }
-      
-      if (!doc.exists) {
-        const newProfile: UserProfile = {
-          uid, email,
-          name: initialData?.name || `Anon_${uid.substring(0, 4).toUpperCase()}`,
-          Profile_photo: initialData?.Profile_photo || null,
-          Display_Pic1: null, Display_Pic2: null, Display_Pic3: null,
-          bio: '', allowFriendRequests: true, revealPhotosToFriendsOnly: true,
-          revealRule: 'manual', revealTimeMinutes: 5
-        };
-        await userDocRef.set(newProfile);
-        setProfile(newProfile);
-      } else {
-        const data = doc.data() as UserProfile;
-        setProfile(data);
-      }
-
-      const unsubFiles = userDocRef.collection('files').orderBy('createdAt', 'desc').onSnapshot(
-        (snap: firebase.firestore.QuerySnapshot) => {
-          const fileList: UserFile[] = [];
-          snap.forEach((d: firebase.firestore.QueryDocumentSnapshot) => {
-            fileList.push(d.data() as UserFile);
-          });
-          setFiles(fileList);
-        },
-        (err: firebase.firestore.FirestoreError) => {
-          console.warn("[YOLO Auth] File Snapshot Listener Error:", err.message);
-        }
-      );
-
-      return unsubFiles;
-    } catch (error) {
-      console.error("[YOLO Auth] Error syncing Firestore profile:", error);
+    const userDocRef = db.collection('Users').doc(uid);
+    let doc = await userDocRef.get();
+    
+    if (!doc.exists) {
+      const newProfile: UserProfile = {
+        uid, email, name: initialData?.name || `Anon_${uid.substring(0, 4).toUpperCase()}`,
+        Profile_photo: initialData?.Profile_photo || null,
+        Display_Pic1: null, Display_Pic2: null, Display_Pic3: null,
+        bio: '', allowFriendRequests: true, revealPhotosToFriendsOnly: true,
+        revealRule: 'manual', revealTimeMinutes: 5
+      };
+      await userDocRef.set(newProfile);
+      setProfile(newProfile);
+    } else {
+      setProfile(doc.data() as UserProfile);
     }
+
+    const unsubFriends = userDocRef.collection('friends').onSnapshot(async (snap) => {
+      const uids = snap.docs.map(d => d.id);
+      if (uids.length === 0) {
+        setFriendProfiles([]);
+        return;
+      }
+      
+      const resolved: UserProfile[] = [];
+      const chunks = [];
+      for (let i = 0; i < uids.length; i += 30) chunks.push(uids.slice(i, i + 30));
+      
+      for (const chunk of chunks) {
+        try {
+          const q = await db.collection('Users')
+            .where(firebase.firestore.FieldPath.documentId(), 'in', chunk)
+            .get();
+          q.forEach(d => resolved.push(d.data() as UserProfile));
+        } catch (err) {
+          console.warn('[YOLO Auth] Restricted profile read prevented by security rules.', err);
+        }
+      }
+      setFriendProfiles(resolved);
+    });
+
+    const unsubSent = userDocRef.collection('sentRequests').onSnapshot(snap => {
+      setSentRequests(snap.docs.map(d => ({ ...d.data(), uid: d.id } as FriendRequest)));
+    }, err => console.debug('[YOLO Auth] sentRequests listener blocked', err));
+
+    const unsubReceived = userDocRef.collection('receivedRequests').onSnapshot(snap => {
+      setReceivedRequests(snap.docs.map(d => ({ ...d.data(), uid: d.id } as FriendRequest)));
+    }, err => console.debug('[YOLO Auth] receivedRequests listener blocked', err));
+
+    const unsubFiles = userDocRef.collection('files').orderBy('createdAt', 'desc').onSnapshot(snap => {
+      setFiles(snap.docs.map(d => d.data() as UserFile));
+    });
+
+    return () => { unsubFriends(); unsubSent(); unsubReceived(); unsubFiles(); };
   };
 
   useEffect(() => {
-    let unsubFiles: (() => void) | undefined;
-
-    const unsubscribeAuth = auth.onAuthStateChanged(async (firebaseUser: firebase.User | null) => {
-      if (firebaseUser && firebaseUser.email && firebaseUser.emailVerified) {
-        setUser({ 
-          email: firebaseUser.email, 
-          uid: firebaseUser.uid,
-          displayName: firebaseUser.displayName,
-          photoURL: firebaseUser.photoURL,
-          emailVerified: firebaseUser.emailVerified
-        });
-        unsubFiles = await syncUserWithFirestore(firebaseUser.uid, firebaseUser.email);
+    let unsub: (() => void) | undefined;
+    const unsubscribeAuth = auth.onAuthStateChanged(async (u) => {
+      if (u && u.email && u.emailVerified) {
+        setUser({ email: u.email, uid: u.uid, displayName: u.displayName, photoURL: u.photoURL, emailVerified: u.emailVerified });
+        unsub = await syncUserWithFirestore(u.uid, u.email);
       } else {
-        setUser(null);
-        setProfile(null);
-        setFriendProfiles([]);
-        setFiles([]);
-        if (unsubFiles) unsubFiles();
+        setUser(null); setProfile(null); setFriendProfiles([]); setSentRequests([]); setReceivedRequests([]); setFiles([]);
+        if (unsub) unsub();
       }
       setLoading(false);
     });
-
-    return () => {
-      unsubscribeAuth();
-      if (unsubFiles) unsubFiles();
-    };
+    return () => { unsubscribeAuth(); if (unsub) unsub(); };
   }, []);
 
-  const uploadVaultFile = async (file: File, notes: string = '') => {
+  const sendFriendRequest = async (targetUid: string) => {
+    if (!user || !profile) return;
+    const batch = db.batch();
+    const sentRef = db.collection('Users').doc(user.uid).collection('sentRequests').doc(targetUid);
+    const receivedRef = db.collection('Users').doc(targetUid).collection('receivedRequests').doc(user.uid);
+    
+    batch.set(sentRef, { status: 'pending', createdAt: Date.now() });
+    batch.set(receivedRef, { 
+      status: 'pending', 
+      name: profile.name, 
+      photoURL: profile.Profile_photo, 
+      createdAt: Date.now() 
+    });
+    await batch.commit();
+  };
+
+  const acceptFriendRequest = async (targetUid: string) => {
     if (!user) return;
-    const fileId = crypto.randomUUID();
-    const storagePath = `user_uploads/${user.uid}/${fileId}_${file.name}`;
-    const storageRef = storage.ref(storagePath);
-    await storageRef.put(file);
-    const downloadURL = await storageRef.getDownloadURL();
+    const batch = db.batch();
+    const chatId = [user.uid, targetUid].sort().join('_');
+    const myReceivedRef = db.collection('Users').doc(user.uid).collection('receivedRequests').doc(targetUid);
+    const peerSentRef = db.collection('Users').doc(targetUid).collection('sentRequests').doc(user.uid);
+    const myFriendRef = db.collection('Users').doc(user.uid).collection('friends').doc(targetUid);
+    const peerFriendRef = db.collection('Users').doc(targetUid).collection('friends').doc(user.uid);
 
-    let aiSummary = "Processing intelligence...";
-    try {
-      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-      const response = await ai.models.generateContent({
-        model: 'gemini-3-flash-preview',
-        contents: `Provide a concise, technical summary for a file named "${file.name}" of type "${file.type}". If this looks like a sensitive document, warn the user to encrypt it. Context: This is part of an anonymous ephemeral vault.`,
-      });
-      aiSummary = response.text || "No summary could be generated.";
-    } catch (err) {
-      aiSummary = "Summary temporarily unavailable.";
-    }
+    batch.delete(myReceivedRef);
+    batch.delete(peerSentRef);
+    
+    const friendData = { connectedAt: Date.now(), chatId: chatId, status: 'active' };
+    batch.set(myFriendRef, friendData);
+    batch.set(peerFriendRef, friendData);
 
-    const fileData: UserFile = {
-      id: fileId,
-      name: file.name,
-      mimeType: file.type || 'application/octet-stream',
-      size: file.size,
-      url: downloadURL,
-      storagePath: storagePath,
-      createdAt: Date.now(),
-      notes,
-      aiSummary
-    };
-
-    await db.collection('Users').doc(user.uid).collection('files').doc(fileId).set(fileData);
+    await batch.commit();
   };
 
-  const deleteVaultFile = async (fileId: string, storagePath: string) => {
+  const declineFriendRequest = async (targetUid: string) => {
     if (!user) return;
-    try { await storage.ref(storagePath).delete(); } catch (err) {}
-    await db.collection('Users').doc(user.uid).collection('files').doc(fileId).delete();
+    const batch = db.batch();
+    batch.delete(db.collection('Users').doc(user.uid).collection('receivedRequests').doc(targetUid));
+    batch.delete(db.collection('Users').doc(targetUid).collection('sentRequests').doc(user.uid));
+    await batch.commit();
   };
 
-  const signIn = async (email: string, pass: string) => {
-    const credential = await auth.signInWithEmailAndPassword(email, pass);
-    const u = credential.user;
-    if (u && u.email) {
-      if (!u.emailVerified) {
-        await u.sendEmailVerification();
-        await auth.signOut();
-        const error = new Error("EMAIL_NOT_VERIFIED");
-        (error as any).email = u.email;
-        throw error;
-      }
-      setUser({ email: u.email, uid: u.uid, displayName: u.displayName, photoURL: u.photoURL, emailVerified: u.emailVerified });
-      await syncUserWithFirestore(u.uid, u.email);
-    }
+  const signIn = async (e: string, p: string) => {
+    const cred = await auth.signInWithEmailAndPassword(e, p);
+    if (cred.user && !cred.user.emailVerified) { await cred.user.sendEmailVerification(); await auth.signOut(); throw new Error("EMAIL_NOT_VERIFIED"); }
   };
 
-  const signUp = async (email: string, pass: string, displayName: string, photo: string | null) => {
-    const credential = await auth.createUserWithEmailAndPassword(email, pass);
-    const u = credential.user;
-    if (u) {
-      let photoURL = null;
-      if (photo) { photoURL = await uploadUserImage(u.uid, photo, 'profile_identity.jpg'); }
-      await u.updateProfile({ displayName: displayName || `Anon_${u.uid.substring(0, 4)}`, photoURL: photoURL });
-      await syncUserWithFirestore(u.uid, email, { name: displayName, Profile_photo: photoURL });
-      await u.sendEmailVerification();
+  const signUp = async (e: string, p: string, dn: string, ph: string | null) => {
+    const cred = await auth.createUserWithEmailAndPassword(e, p);
+    if (cred.user) {
+      let url = null;
+      if (ph) url = await uploadUserImage(cred.user.uid, ph, 'profile_identity.jpg');
+      await cred.user.updateProfile({ displayName: dn, photoURL: url });
+      await syncUserWithFirestore(cred.user.uid, e, { name: dn, Profile_photo: url });
+      await cred.user.sendEmailVerification();
       await auth.signOut();
-      const error = new Error("EMAIL_NOT_VERIFIED");
-      (error as any).email = email;
-      throw error;
+      throw new Error("EMAIL_NOT_VERIFIED");
     }
   };
 
   const sendPasswordReset = async (email: string) => { await auth.sendPasswordResetEmail(email); };
-
-  const logout = async () => {
-    await auth.signOut();
-    setUser(null);
-    setProfile(null);
-    setFriendProfiles([]);
-    setFiles([]);
-  };
-
-  const addFriend = async (userA: string, userB: string) => {
-    const batch = db.batch();
-    const refA = db.collection('Users').doc(userA).collection('friends').doc(userB);
-    const refB = db.collection('Users').doc(userB).collection('friends').doc(userA);
-    const data = { connectedAt: Date.now() };
-    batch.set(refA, data);
-    batch.set(refB, data);
-    await batch.commit();
-  };
+  const logout = async () => { await auth.signOut(); };
 
   const updateProfile = async (updates: Partial<UserProfile>) => {
     if (!profile || !user || !auth.currentUser) return;
-    try {
-      let firestoreUpdates: any = { ...updates };
-      const imageFields = ['Profile_photo', 'Display_Pic1', 'Display_Pic2', 'Display_Pic3'];
-      for (const field of imageFields) {
-        const val = updates[field as keyof UserProfile];
-        if (typeof val === 'string' && val.startsWith('data:')) {
-          const fileName = `${field.toLowerCase()}.jpg`;
-          const url = await uploadUserImage(user.uid, val, fileName);
-          firestoreUpdates[field] = url;
-          if (field === 'Profile_photo') {
-            await auth.currentUser.updateProfile({ photoURL: url });
-            setUser(prev => prev ? ({ ...prev, photoURL: url }) : null);
-          }
-        }
+    let fsUpdates: any = { ...updates };
+    for (const field of ['Profile_photo', 'Display_Pic1', 'Display_Pic2', 'Display_Pic3']) {
+      const val = updates[field as keyof UserProfile];
+      if (typeof val === 'string' && val.startsWith('data:')) {
+        const url = await uploadUserImage(user.uid, val, `${field.toLowerCase()}.jpg`);
+        fsUpdates[field] = url;
+        if (field === 'Profile_photo') await auth.currentUser.updateProfile({ photoURL: url });
       }
-      if (updates.name !== undefined) {
-        await auth.currentUser.updateProfile({ displayName: updates.name });
-        setUser(prev => prev ? ({ ...prev, displayName: updates.name || null }) : null);
-      }
-      const newProfile = { ...profile, ...firestoreUpdates };
-      setProfile(newProfile);
-      await db.collection('Users').doc(user.uid).update(firestoreUpdates);
-    } catch (error: any) {
-      console.error("[YOLO Auth] Update Profile Error:", error);
-      throw error;
     }
+    if (updates.name) await auth.currentUser.updateProfile({ displayName: updates.name });
+    await db.collection('Users').doc(user.uid).update(fsUpdates);
+    setProfile(prev => prev ? ({ ...prev, ...fsUpdates }) : null);
+  };
+
+  const uploadVaultFile = async (file: File, notes: string = '') => {
+    if (!user) return;
+    const id = crypto.randomUUID();
+    const path = `user_uploads/${user.uid}/${id}_${file.name}`;
+    const ref = storage.ref(path);
+    await ref.put(file);
+    const url = await ref.getDownloadURL();
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    const res = await ai.models.generateContent({
+      model: 'gemini-3-flash-preview',
+      contents: `Technical summary for file: ${file.name} (${file.type}).`,
+    });
+    const fileData: UserFile = { id, name: file.name, mimeType: file.type || 'app/octet', size: file.size, url, storagePath: path, createdAt: Date.now(), notes, aiSummary: res.text || "" };
+    await db.collection('Users').doc(user.uid).collection('files').doc(id).set(fileData);
+  };
+
+  const deleteVaultFile = async (id: string, path: string) => {
+    if (!user) return;
+    try { await storage.ref(path).delete(); } catch {}
+    await db.collection('Users').doc(user.uid).collection('files').doc(id).delete();
   };
 
   const deleteAccount = async () => {
     if (!user || !auth.currentUser) return;
-    const uid = user.uid;
-    try {
-      const fileSnap = await db.collection('Users').doc(uid).collection('files').get();
-      for (const f of fileSnap.docs) {
-        const fileData = f.data() as UserFile;
-        await storage.ref(fileData.storagePath).delete().catch(() => {});
-        await f.ref.delete();
-      }
-      const imageFields = ['profile_identity.jpg', 'profile_photo.jpg', 'display_pic1.jpg', 'display_pic2.jpg', 'display_pic3.jpg'];
-      for (const img of imageFields) { await storage.ref(`user_uploads/${uid}/${img}`).delete().catch(() => {}); }
-      await db.collection('Users').doc(uid).delete();
-      await auth.currentUser.delete();
-      await logout();
-    } catch (err) { throw new Error("Purge failed. Re-authenticate to delete records."); }
+    await db.collection('Users').doc(user.uid).delete();
+    await auth.currentUser.delete();
+    await logout();
   };
 
   return (
     <AuthContext.Provider value={{ 
-      user, profile, friendProfiles, files, loading, signIn, signUp, sendPasswordReset, logout, updateProfile, addFriend, deleteAccount,
-      uploadVaultFile, deleteVaultFile
+      user, profile, friendProfiles, sentRequests, receivedRequests, files, loading, signIn, signUp, sendPasswordReset, logout, updateProfile, 
+      sendFriendRequest, acceptFriendRequest, declineFriendRequest, deleteAccount, uploadVaultFile, deleteVaultFile 
     }}>
       {children}
     </AuthContext.Provider>

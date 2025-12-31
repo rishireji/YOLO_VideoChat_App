@@ -3,22 +3,36 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     
-    // Profiles: Everyone authenticated can view profiles, only owners can edit.
+    // Profiles: Read access restricted to owner or friends only.
     match /Users/{userId} {
-      // allow read is a shorthand for get and list.
-      // We allow authenticated users to read any profile document or list the collection.
-      allow read: if request.auth != null;
+      allow read: if request.auth != null && (
+        request.auth.uid == userId || 
+        exists(/databases/$(database)/documents/Users/$(userId)/friends/$(request.auth.uid))
+      );
       allow write: if request.auth != null && request.auth.uid == userId;
       
+      // Handshake: sentRequests
+      match /sentRequests/{requestId} {
+        allow read, write: if request.auth != null && request.auth.uid == userId;
+      }
+      
+      // Handshake: receivedRequests
+      match /receivedRequests/{requestId} {
+        // Owner can read their incoming requests
+        allow read, delete: if request.auth != null && request.auth.uid == userId;
+        // Foreign user can create a request doc to introduce themselves
+        allow create: if request.auth != null && request.auth.uid == requestId;
+      }
+
       // Vault files: Strictly private to the owner.
       match /files/{fileId} {
         allow read, write: if request.auth != null && request.auth.uid == userId;
       }
       
-      // Friends: Reciprocal access for handshakes. 
-      // Both the owner (userId) and the connected peer (friendId) need access to write the link.
+      // Friends: Reciprocal access for handshake completion.
       match /friends/{friendId} {
         allow read: if request.auth != null && (request.auth.uid == userId || request.auth.uid == friendId);
+        // Both parties involved can create the friendship link during batch accept
         allow write: if request.auth != null && (request.auth.uid == userId || request.auth.uid == friendId);
       }
     }

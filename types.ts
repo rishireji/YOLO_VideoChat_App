@@ -4,6 +4,14 @@ export type ReactionType = 'like' | 'laugh' | 'hug' | 'heart' | 'wow';
 
 export type RevealRule = 'mutual' | 'time' | 'manual';
 
+export interface FriendRequest {
+  uid: string;
+  name: string;
+  photoURL: string | null;
+  status: 'pending';
+  createdAt: number;
+}
+
 export interface UserSession {
   id: string;
   token: string;
@@ -44,7 +52,7 @@ export interface UserProfile {
 }
 
 export interface SignalingMessage {
-  type: 'presence' | 'match_request' | 'match_accept' | 'offer' | 'answer' | 'candidate' | 'disconnect';
+  type: 'presence' | 'match_request' | 'match_accept' | 'offer' | 'answer' | 'candidate' | 'disconnect' | 'friend_request' | 'friend_accept';
   senderId: string;
   targetId?: string;
   region?: Region;
