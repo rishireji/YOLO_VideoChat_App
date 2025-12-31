@@ -106,7 +106,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   // Friend sync using subcollection
   useEffect(() => {
-    if (!user) {
+    if (!user?.uid) {
       setFriendProfiles([]);
       return;
     }
@@ -123,23 +123,28 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           return;
         }
 
-        const resolved: UserProfile[] = [];
-        // Firestore limits "in" queries to 30 items
-        const chunks: string[][] = [];
-        for (let i = 0; i < friendUids.length; i += 30) {
-          chunks.push(friendUids.slice(i, i + 30));
+        try {
+          const resolved: UserProfile[] = [];
+          // Firestore limits "in" queries to 30 items
+          const chunks: string[][] = [];
+          for (let i = 0; i < friendUids.length; i += 30) {
+            chunks.push(friendUids.slice(i, i + 30));
+          }
+
+          for (const chunk of chunks) {
+            if (chunk.length === 0) continue;
+            const q = await db
+              .collection('Users')
+              .where(firebase.firestore.FieldPath.documentId(), 'in', chunk)
+              .get();
+
+            q.forEach(doc => resolved.push(doc.data() as UserProfile));
+          }
+
+          setFriendProfiles(resolved);
+        } catch (err: any) {
+          console.error("[YOLO Auth] Friend profile resolution failed:", err.message);
         }
-
-        for (const chunk of chunks) {
-          const q = await db
-            .collection('Users')
-            .where(firebase.firestore.FieldPath.documentId(), 'in', chunk)
-            .get();
-
-          q.forEach(doc => resolved.push(doc.data() as UserProfile));
-        }
-
-        setFriendProfiles(resolved);
       }, (err) => {
         console.warn('[YOLO Auth] Friend listener error:', err.message);
       });
@@ -155,7 +160,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       try {
         doc = await userDocRef.get();
       } catch (getErr: any) {
-        if (getErr.code === 'permission-denied') return;
+        if (getErr.code === 'permission-denied') {
+          console.warn("[YOLO Auth] Profile read permission denied for UID:", uid);
+          return;
+        }
         throw getErr;
       }
       
@@ -184,7 +192,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           setFiles(fileList);
         },
         (err: firebase.firestore.FirestoreError) => {
-          console.warn("[YOLO Auth] Firestore Snapshot Listener Error:", err.message);
+          console.warn("[YOLO Auth] File Snapshot Listener Error:", err.message);
         }
       );
 
