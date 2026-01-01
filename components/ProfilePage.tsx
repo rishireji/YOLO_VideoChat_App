@@ -315,7 +315,9 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ isOpen, onClose }) => 
                                        <span className="w-1 h-1 rounded-full bg-zinc-800"></span>
                                        <span>{formatSize(file.size)}</span>
                                        <span className="w-1 h-1 rounded-full bg-zinc-800"></span>
-                                       <span>{new Date(file.createdAt).toLocaleDateString()}</span>
+                                      <span>{file.createdAt? file.createdAt.toDate().toLocaleDateString(): ''}
+</span>
+
                                     </div>
                                  </div>
                               </div>
