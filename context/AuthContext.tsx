@@ -201,20 +201,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   await batch.commit();
 };
 
-    
-    // Mirror data to receiver so they don't need to read sender's profile doc (security constraint)
-    batch.set(receivedRef, { 
-      status: 'pending', 
-      fromUid: user.uid,
-      name: profile.name, 
-      photoURL: profile.Profile_photo, 
-      createdAt: firebase.firestore.FieldValue.serverTimestamp() 
-    });
-    
-    await batch.commit();
-    console.log(`[YOLO Social] Request sent to ${targetUid}`);
-  };
-
   const acceptFriendRequest = async (targetUid: string) => {
     if (!user) return;
     const batch = db.batch();
