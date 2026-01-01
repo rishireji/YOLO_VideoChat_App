@@ -32,6 +32,7 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ onExit }) => {
   const [isReportModalOpen, setIsReportModalOpen] = useState(false);
   const [activeReactions, setActiveReactions] = useState<FloatingReaction[]>([]);
   const [isUserActive, setIsUserActive] = useState(true);
+  const [remoteUid, setRemoteUid] = useState<string | null>(null);
   const hasDeductedRef = useRef<string | null>(null);
 
   const handleReactionReceived = useCallback((type: ReactionType) => {
@@ -42,27 +43,58 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ onExit }) => {
     setTimeout(() => setActiveReactions(prev => prev.filter(r => r.id !== id)), 2500);
   }, []);
 
-  const handleMessageReceived = useCallback(async (text: string) => {
-    const messageId = Math.random().toString(36).substring(7);
-    const msg: ChatMessage = { id: messageId, senderId: 'stranger', text, timestamp: null, isTranslating: true };
-    setMessages(prev => [...prev, msg]);
-    const targetLang = session?.preferredLanguage || 'English';
-    const translationResult = await translateText(text, targetLang);
-    if (translationResult) {
-      setMessages(prev => prev.map(m => m.id === messageId ? { ...m, translatedText: translationResult.translatedText, detectedLanguage: translationResult.detectedLanguage, isTranslating: false, isOriginalShown: translationResult.detectedLanguage.toLowerCase() === targetLang.toLowerCase() } : m));
-    } else {
-      setMessages(prev => prev.map(m => m.id === messageId ? { ...m, isTranslating: false } : m));
+const handleMessageReceived = useCallback(async (text: string) => {
+  // 🔥 HANDLE IDENTITY MESSAGE
+  try {
+    const parsed = JSON.parse(text);
+    if (parsed?.type === 'identity' && parsed?.uid) {
+      console.log('[YOLO] Remote Firebase UID received:', parsed.uid);
+      setRemoteUid(parsed.uid);
+      return;
     }
-  }, [session?.preferredLanguage, translateText]);
+  } catch {
+    // not identity, continue as chat
+  }
 
+  const messageId = Math.random().toString(36).substring(7);
+  const msg: ChatMessage = {
+    id: messageId,
+    senderId: 'stranger',
+    text,
+    timestamp: null,
+    isTranslating: true
+  };
+
+  setMessages(prev => [...prev, msg]);
+
+  const targetLang = session?.preferredLanguage || 'English';
+  const translationResult = await translateText(text, targetLang);
+
+  if (translationResult) {
+    setMessages(prev =>
+      prev.map(m =>
+        m.id === messageId
+          ? {
+              ...m,
+              translatedText: translationResult.translatedText,
+              detectedLanguage: translationResult.detectedLanguage,
+              isTranslating: false,
+              isOriginalShown:
+                translationResult.detectedLanguage.toLowerCase() ===
+                targetLang.toLowerCase()
+            }
+          : m
+      )
+    );
+  } else {
+    setMessages(prev =>
+      prev.map(m =>
+        m.id === messageId ? { ...m, isTranslating: false } : m
+      )
+    );
+  }
+}, [session?.preferredLanguage, translateText]);
   const { localStream, remoteStream, status, sendMessage, sendReaction, skip, isMuted, isVideoOff, toggleMute, toggleVideo, remotePeerId } = useWebRTC(session?.region || 'global', handleReactionReceived, handleMessageReceived);
-
-  // Identify Firebase UID from the remote peer ID: yolo_[UID]_suffix
-  const remoteUid = useMemo(() => {
-    if (!remotePeerId || !remotePeerId.startsWith('yolo_')) return null;
-    const parts = remotePeerId.split('_');
-    return parts[1] || null;
-  }, [remotePeerId]);
 
   const friendStatus = useMemo(() => {
     if (!remoteUid) return 'none';

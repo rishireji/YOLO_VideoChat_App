@@ -112,15 +112,32 @@ export const useWebRTC = (
     callRef.current = call;
   }, [skip, stopProposal, updateStatus]);
 
-  const setupDataHandlers = useCallback((conn: DataConnection) => {
-    conn.on('data', (data: any) => {
-      if (data.type === 'chat') onMessageReceived?.(data.text);
-      if (data.type === 'reaction') onReactionReceived?.(data.value);
-    });
-    conn.on('close', () => skip(false));
-    conn.on('error', () => skip(false));
-    connRef.current = conn;
-  }, [skip, onMessageReceived, onReactionReceived]);
+const setupDataHandlers = useCallback((conn: DataConnection) => {
+  conn.on('open', () => {
+    // 🔥 SEND FIREBASE UID IMMEDIATELY
+    if (user?.uid) {
+      conn.send({
+        type: 'identity',
+        uid: user.uid,
+      });
+    }
+  });
+
+  conn.on('data', (data: any) => {
+    if (data.type === 'identity') {
+      // forward identity message to ChatRoom
+      onMessageReceived?.(JSON.stringify(data));
+      return;
+    }
+
+    if (data.type === 'chat') onMessageReceived?.(data.text);
+    if (data.type === 'reaction') onReactionReceived?.(data.value);
+  });
+
+  conn.on('close', () => skip(false));
+  conn.on('error', () => skip(false));
+  connRef.current = conn;
+}, [skip, onMessageReceived, onReactionReceived, user]);
 
   const initiateP2P = useCallback((remoteId: string, stream: MediaStream) => {
     updateStatus('connecting');
