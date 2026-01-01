@@ -106,7 +106,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
 
     const unsubFriends = userDocRef.collection('friends').onSnapshot(async (snap) => {
-      const uids = snap.docs.map(d => d.id);
+      const uids = snap.docs
+  .filter(d => d.data().status === 'active' || d.data().status === 'accepted')
+  .map(d => d.id);
+
       if (uids.length === 0) {
         setFriendProfiles([]);
         return;
@@ -159,21 +162,71 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return () => { unsubscribeAuth(); if (unsub) unsub(); };
   }, []);
 
-  const sendFriendRequest = async (targetUid: string) => {
-    if (!user || !profile) return;
-    const batch = db.batch();
-    const sentRef = db.collection('Users').doc(user.uid).collection('sentRequests').doc(targetUid);
-    const receivedRef = db.collection('Users').doc(targetUid).collection('receivedRequests').doc(user.uid);
-    
-    batch.set(sentRef, { status: 'pending', createdAt: Date.now() });
-    batch.set(receivedRef, { 
-      status: 'pending', 
-      name: profile.name, 
-      photoURL: profile.Profile_photo, 
-      createdAt: Date.now() 
-    });
-    await batch.commit();
-  };
+ const sendFriendRequest = async (targetUid: string) => {
+  if (!user || !profile) return;
+  if (user.uid === targetUid) return; // no self requests
+
+  const myUserRef = db.collection('Users').doc(user.uid);
+  const targetUserRef = db.collection('Users').doc(targetUid);
+
+  // 1️⃣ Already friends?
+  const friendSnap = await myUserRef
+    .collection('friends')
+    .doc(targetUid)
+    .get();
+
+  if (friendSnap.exists) {
+    console.warn('Already friends');
+    return;
+  }
+
+  // 2️⃣ Request already sent?
+  const sentReqSnap = await myUserRef
+    .collection('sentRequests')
+    .doc(targetUid)
+    .get();
+
+  if (sentReqSnap.exists) {
+    console.warn('Friend request already sent');
+    return;
+  }
+
+  // 3️⃣ Request already received? (auto-accept optional)
+  const receivedReqSnap = await myUserRef
+    .collection('receivedRequests')
+    .doc(targetUid)
+    .get();
+
+  if (receivedReqSnap.exists) {
+    console.warn('User already sent you a request');
+    return;
+  }
+
+  // 4️⃣ Send request (atomic)
+  const batch = db.batch();
+
+  batch.set(
+    myUserRef.collection('sentRequests').doc(targetUid),
+    {
+      status: 'pending',
+      createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+    }
+  );
+
+  batch.set(
+    targetUserRef.collection('receivedRequests').doc(user.uid),
+    {
+      status: 'pending',
+      fromUid: user.uid,
+      name: profile.name,
+      photoURL: profile.Profile_photo || null,
+      createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+    }
+  );
+
+  await batch.commit();
+};
+
 
   const acceptFriendRequest = async (targetUid: string) => {
     if (!user) return;
@@ -187,7 +240,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     batch.delete(myReceivedRef);
     batch.delete(peerSentRef);
     
-    const friendData = { connectedAt: Date.now(), chatId: chatId, status: 'active' };
+    const friendData = { connectedAt: firebase.firestore.FieldValue.serverTimestamp(), chatId: chatId, status: 'active' };
     batch.set(myFriendRef, friendData);
     batch.set(peerFriendRef, friendData);
 
@@ -251,7 +304,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       model: 'gemini-3-flash-preview',
       contents: `Technical summary for file: ${file.name} (${file.type}).`,
     });
-    const fileData: UserFile = { id, name: file.name, mimeType: file.type || 'app/octet', size: file.size, url, storagePath: path, createdAt: Date.now(), notes, aiSummary: res.text || "" };
+    const fileData: UserFile = { id, name: file.name, mimeType: file.type || 'app/octet', size: file.size, url, storagePath: path, createdAt: firebase.firestore.FieldValue.serverTimestamp(), notes, aiSummary: res.text || "" };
     await db.collection('Users').doc(user.uid).collection('files').doc(id).set(fileData);
   };
 
