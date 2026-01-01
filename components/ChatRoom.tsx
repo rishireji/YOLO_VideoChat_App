@@ -44,8 +44,13 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ onExit }) => {
 
   const handleMessageReceived = useCallback(async (text: string) => {
     const messageId = Math.random().toString(36).substring(7);
-    const msg: ChatMessage = { id: messageId, senderId: 'stranger', text, timestamp: Date.now(), isTranslating: true };
-    setMessages(prev => [...prev, msg]);
+    const msg: ChatMessage = { 
+  id: messageId, 
+  senderId: 'stranger', 
+  text, 
+  timestamp: null, // UI state uses null
+  isTranslating: true 
+};setMessages(prev => [...prev, msg]);
     const targetLang = session?.preferredLanguage || 'English';
     const translationResult = await translateText(text, targetLang);
     if (translationResult) {
@@ -97,7 +102,12 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ onExit }) => {
           if (deductCoins(COST_PER_CALL)) hasDeductedRef.current = remotePeerId;
           else setAppState(AppState.EXHAUSTED);
         }
-        setMessages([{ id: 'system-' + Date.now(), senderId: 'system', text: "Chat connected. Protocol secured.", timestamp: Date.now() }]);
+        setMessages([{
+  id: 'system-' + Date.now(),
+  senderId: 'system',
+  text: "Chat connected. Protocol secured.",
+  timestamp: null
+}]);
         break;
       case 'disconnected': setAppState(AppState.DISCONNECTED); break;
     }
@@ -176,7 +186,12 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ onExit }) => {
           </div>
         </div>
       </div>
-      <Sidebar messages={messages} onSendMessage={(text) => { const msg: ChatMessage = { id: Date.now().toString(), senderId: 'me', text, timestamp: Date.now() }; setMessages(prev => [...prev, msg]); sendMessage(text); }} onToggleTranslation={(id) => setMessages(prev => prev.map(m => m.id === id ? { ...m, isOriginalShown: !m.isOriginalShown } : m))} isConnected={appState === AppState.CONNECTED} region={session?.region || 'global'} />
+      <Sidebar messages={messages} onSendMessage={(text) => { const msg: ChatMessage = { 
+  id: Date.now().toString(), 
+  senderId: 'me', 
+  text,  
+  timestamp: null
+};setMessages(prev => [...prev, msg]); sendMessage(text); }} onToggleTranslation={(id) => setMessages(prev => prev.map(m => m.id === id ? { ...m, isOriginalShown: !m.isOriginalShown } : m))} isConnected={appState === AppState.CONNECTED} region={session?.region || 'global'} />
     </div>
   );
 };

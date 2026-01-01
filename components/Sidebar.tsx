@@ -129,16 +129,21 @@ export const Sidebar: React.FC<SidebarProps> = ({ messages, onSendMessage, onTog
                         </>
                       )}
                     </div>
-                    <div className={`flex items-center gap-2 mt-1.5 ${msg.senderId === 'me' ? 'flex-row-reverse' : 'flex-row'}`}>
-                      <span className="text-[8px] lg:text-[9px] text-zinc-600 font-bold uppercase tracking-widest opacity-80">
-                        {msg.senderId === 'me' ? 'You' : 'Stranger'} • {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                      </span>
-                      {msg.senderId === 'stranger' && msg.detectedLanguage && (
-                        <span className="px-1.5 py-0.5 rounded bg-zinc-900 border border-zinc-800 text-[7px] font-bold text-zinc-500 uppercase tracking-widest">
-                          {msg.detectedLanguage}
-                        </span>
-                      )}
-                    </div>
+<div
+  className={`flex items-center gap-2 mt-1.5 ${
+    msg.senderId === 'me' ? 'flex-row-reverse' : 'flex-row'
+  }`}
+>
+  <span className="text-[8px] lg:text-[9px] text-zinc-600 font-bold uppercase tracking-widest opacity-80">
+    {msg.senderId === 'me' ? 'You' : 'Stranger'} •{' '}
+    {msg.timestamp
+      ? msg.timestamp.toDate().toLocaleTimeString([], {
+          hour: '2-digit',
+          minute: '2-digit',
+        })
+      : ''}
+  </span>
+</div>
                   </>
                 )}
               </div>

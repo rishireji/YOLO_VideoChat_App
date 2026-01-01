@@ -64,16 +64,19 @@ export interface SignalingMessage {
   payload?: any;
 }
 
+import type firebase from 'firebase/compat/app';
+
 export interface ChatMessage {
   id: string;
   senderId: string;
   text: string;
-  timestamp: firebase.firestore.Timestamp;
+  timestamp: firebase.firestore.Timestamp | null;
   translatedText?: string;
   detectedLanguage?: string;
   isOriginalShown?: boolean;
   isTranslating?: boolean;
 }
+
 
 export enum AppState {
   IDLE = 'IDLE',
