@@ -44,13 +44,8 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ onExit }) => {
 
   const handleMessageReceived = useCallback(async (text: string) => {
     const messageId = Math.random().toString(36).substring(7);
-    const msg: ChatMessage = { 
-  id: messageId, 
-  senderId: 'stranger', 
-  text, 
-  timestamp: null, // UI state uses null
-  isTranslating: true 
-};setMessages(prev => [...prev, msg]);
+    const msg: ChatMessage = { id: messageId, senderId: 'stranger', text, timestamp: null, isTranslating: true };
+    setMessages(prev => [...prev, msg]);
     const targetLang = session?.preferredLanguage || 'English';
     const translationResult = await translateText(text, targetLang);
     if (translationResult) {
@@ -60,20 +55,20 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ onExit }) => {
     }
   }, [session?.preferredLanguage, translateText]);
 
-  const { localStream, remoteStream, status, sendMessage, sendReaction, skip, isMuted, isVideoOff, toggleMute, toggleVideo, remotePeerId, sendSignal } = useWebRTC(session?.region || 'global', handleReactionReceived, handleMessageReceived);
+  const { localStream, remoteStream, status, sendMessage, sendReaction, skip, isMuted, isVideoOff, toggleMute, toggleVideo, remotePeerId } = useWebRTC(session?.region || 'global', handleReactionReceived, handleMessageReceived);
 
-  // Extract real UID from remotePeerId (yolo_XXXXXX_peerid)
+  // Identify Firebase UID from the remote peer ID: yolo_[UID]_suffix
   const remoteUid = useMemo(() => {
-    if (!remotePeerId) return null;
+    if (!remotePeerId || !remotePeerId.startsWith('yolo_')) return null;
     const parts = remotePeerId.split('_');
     return parts[1] || null;
   }, [remotePeerId]);
 
   const friendStatus = useMemo(() => {
     if (!remoteUid) return 'none';
-    if (friendProfiles.some(f => f.uid.includes(remoteUid))) return 'accepted';
-    if (sentRequests.some(r => r.uid.includes(remoteUid))) return 'sent';
-    if (receivedRequests.some(r => r.uid.includes(remoteUid))) return 'received';
+    if (friendProfiles.some(f => f.uid === remoteUid)) return 'accepted';
+    if (sentRequests.some(r => r.uid === remoteUid)) return 'sent';
+    if (receivedRequests.some(r => r.uid === remoteUid)) return 'received';
     return 'none';
   }, [remoteUid, friendProfiles, sentRequests, receivedRequests]);
 
@@ -102,12 +97,7 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ onExit }) => {
           if (deductCoins(COST_PER_CALL)) hasDeductedRef.current = remotePeerId;
           else setAppState(AppState.EXHAUSTED);
         }
-        setMessages([{
-  id: 'system-' + Date.now(),
-  senderId: 'system',
-  text: "Chat connected. Protocol secured.",
-  timestamp: null
-}]);
+        setMessages([{ id: 'system-' + Date.now(), senderId: 'system', text: "Chat connected. Protocol secured.", timestamp: null }]);
         break;
       case 'disconnected': setAppState(AppState.DISCONNECTED); break;
     }
@@ -118,13 +108,11 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ onExit }) => {
     try {
       if (friendStatus === 'none') {
         await sendFriendRequest(remoteUid);
-        sendSignal({ type: 'friend_request', senderId: user.uid, payload: { uid: user.uid } });
       } else if (friendStatus === 'received') {
         await acceptFriendRequest(remoteUid);
-        sendSignal({ type: 'friend_accept', senderId: user.uid, payload: { uid: user.uid } });
       }
     } catch (err) {
-      console.error("[YOLO Social] Handshake error:", err);
+      console.error("[YOLO Social] Social action failed:", err);
     }
   };
 
@@ -186,12 +174,7 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ onExit }) => {
           </div>
         </div>
       </div>
-      <Sidebar messages={messages} onSendMessage={(text) => { const msg: ChatMessage = { 
-  id: Date.now().toString(), 
-  senderId: 'me', 
-  text,  
-  timestamp: null
-};setMessages(prev => [...prev, msg]); sendMessage(text); }} onToggleTranslation={(id) => setMessages(prev => prev.map(m => m.id === id ? { ...m, isOriginalShown: !m.isOriginalShown } : m))} isConnected={appState === AppState.CONNECTED} region={session?.region || 'global'} />
+      <Sidebar messages={messages} onSendMessage={(text) => { const msg: ChatMessage = { id: Date.now().toString(), senderId: 'me', text, timestamp: null }; setMessages(prev => [...prev, msg]); sendMessage(text); }} onToggleTranslation={(id) => setMessages(prev => prev.map(m => m.id === id ? { ...m, isOriginalShown: !m.isOriginalShown } : m))} isConnected={appState === AppState.CONNECTED} region={session?.region || 'global'} />
     </div>
   );
 };

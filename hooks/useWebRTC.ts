@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { Peer, DataConnection, MediaConnection } from 'peerjs';
 import { Region, ReactionType, SignalingMessage } from '../types';
 import { useSession } from '../context/SessionContext';
+import { useAuth } from '../context/AuthContext';
 
 type WebRTCStatus = 'idle' | 'generating_id' | 'matching' | 'connecting' | 'connected' | 'disconnected' | 'error' | 'signaling_offline';
 
@@ -38,6 +39,7 @@ export const useWebRTC = (
   onMessageReceived?: (text: string) => void
 ) => {
   const { session } = useSession();
+  const { user } = useAuth();
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
   const [status, setStatusState] = useState<WebRTCStatus>('idle');
@@ -114,9 +116,6 @@ export const useWebRTC = (
     conn.on('data', (data: any) => {
       if (data.type === 'chat') onMessageReceived?.(data.text);
       if (data.type === 'reaction') onReactionReceived?.(data.value);
-      if (data.type === 'signal') {
-         window.dispatchEvent(new CustomEvent('rtc_signal', { detail: data.payload }));
-      }
     });
     conn.on('close', () => skip(false));
     conn.on('error', () => skip(false));
@@ -190,7 +189,11 @@ export const useWebRTC = (
         const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 }, audio: true });
         if (!mounted) { stream.getTracks().forEach(t => t.stop()); return; }
         setLocalStream(stream);
-        const uniqueId = `yolo_${session.id.substring(0,6)}_${Math.random().toString(36).substring(7)}`;
+        
+        // Inject Firebase UID into Peer ID: yolo_[FIREBASE_UID]_[RANDOM_SUFFIX]
+        const idPrefix = user ? `yolo_${user.uid}` : `yolo_${session.id.substring(0,6)}`;
+        const uniqueId = `${idPrefix}_${Math.random().toString(36).substring(7)}`;
+        
         const peer = new Peer(uniqueId, { debug: 1, config: ICE_CONFIG, secure: true });
         peerRef.current = peer;
         peer.on('open', (id) => { if (mounted) connectSignaling(id, stream); });
@@ -201,7 +204,7 @@ export const useWebRTC = (
     };
     init();
     return () => { mounted = false; isClosingRef.current = true; cleanup(); if (peerRef.current) peerRef.current.destroy(); if (wsRef.current) wsRef.current.close(); if (localStream) localStream.getTracks().forEach(t => t.stop()); };
-  }, [session?.id, cleanup, connectSignaling, setupCallHandlers, setupDataHandlers, skip, stopProposal, updateStatus]);
+  }, [session?.id, user, cleanup, connectSignaling, setupCallHandlers, setupDataHandlers, skip, stopProposal, updateStatus]);
 
   const toggleMute = useCallback(() => { if (localStream) { const audioTrack = localStream.getAudioTracks()[0]; if (audioTrack) audioTrack.enabled = !audioTrack.enabled; setIsMuted(!audioTrack?.enabled); } }, [localStream]);
   const toggleVideo = useCallback(() => { if (localStream) { const videoTrack = localStream.getVideoTracks()[0]; if (videoTrack) videoTrack.enabled = !videoTrack.enabled; setIsVideoOff(!videoTrack?.enabled); } }, [localStream]);
@@ -210,7 +213,6 @@ export const useWebRTC = (
     localStream, remoteStream, status, isMuted, isVideoOff, toggleMute, toggleVideo, remotePeerId,
     sendMessage: (text: string) => { if (connRef.current?.open) connRef.current.send({ type: 'chat', text }); },
     sendReaction: (value: ReactionType) => { if (connRef.current?.open) connRef.current.send({ type: 'reaction', value }); },
-    sendSignal: (payload: any) => { if (connRef.current?.open) connRef.current.send({ type: 'signal', payload }); },
     skip: () => skip(false), 
   };
 };
