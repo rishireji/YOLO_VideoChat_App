@@ -64,18 +64,19 @@ export interface SignalingMessage {
   payload?: any;
 }
 
-import type firebase from 'firebase/compat/app';
+import { Timestamp } from 'firebase/firestore';
 
 export interface ChatMessage {
   id: string;
   senderId: string;
   text: string;
-  timestamp: firebase.firestore.Timestamp | null;
+  timestamp: Timestamp | null;
   translatedText?: string;
   detectedLanguage?: string;
   isOriginalShown?: boolean;
   isTranslating?: boolean;
 }
+
 
 
 export enum AppState {

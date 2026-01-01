@@ -240,7 +240,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     batch.delete(myReceivedRef);
     batch.delete(peerSentRef);
     
-    const friendData = { connectedAt: firebase.firestore.FieldValue.serverTimestamp(), chatId: chatId, status: 'active' };
+  const friendData = { 
+  connectedAt: firebase.firestore.Timestamp.now(), 
+  chatId,
+  status: 'active',
+};
+
     batch.set(myFriendRef, friendData);
     batch.set(peerFriendRef, friendData);
 
@@ -304,7 +309,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       model: 'gemini-3-flash-preview',
       contents: `Technical summary for file: ${file.name} (${file.type}).`,
     });
-    const fileData: UserFile = { id, name: file.name, mimeType: file.type || 'app/octet', size: file.size, url, storagePath: path, createdAt: firebase.firestore.FieldValue.serverTimestamp(), notes, aiSummary: res.text || "" };
+    const fileData: UserFile = { 
+  id,
+  name: file.name,
+  mimeType: file.type || 'app/octet',
+  size: file.size,
+  url,
+  storagePath: path,
+  createdAt: firebase.firestore.Timestamp.now(), 
+  notes,
+  aiSummary: res.text || "",
+};
     await db.collection('Users').doc(user.uid).collection('files').doc(id).set(fileData);
   };
 
