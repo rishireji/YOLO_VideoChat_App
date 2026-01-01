@@ -160,24 +160,47 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return () => { unsubscribeAuth(); if (unsub) unsub(); };
   }, []);
 
-  const sendFriendRequest = async (targetUid: string) => {
-    if (!user || !profile || user.uid === targetUid) return;
+ const sendFriendRequest = async (targetUid: string) => {
+  if (!user || !profile) return;
+  if (user.uid === targetUid) return;
 
-    // Check if already friends or request pending
-    const existingFriend = await db.collection('Users').doc(user.uid).collection('friends').doc(targetUid).get();
-    if (existingFriend.exists) return;
+  const myRef = db.collection('Users').doc(user.uid);
+  const targetRef = db.collection('Users').doc(targetUid);
 
-    const existingSent = await db.collection('Users').doc(user.uid).collection('sentRequests').doc(targetUid).get();
-    if (existingSent.exists) return;
+  const myReceived = await myRef
+    .collection('receivedRequests')
+    .doc(targetUid)
+    .get();
 
-    const batch = db.batch();
-    const sentRef = db.collection('Users').doc(user.uid).collection('sentRequests').doc(targetUid);
-    const receivedRef = db.collection('Users').doc(targetUid).collection('receivedRequests').doc(user.uid);
-    
-    batch.set(sentRef, { 
-      status: 'pending', 
-      createdAt: firebase.firestore.FieldValue.serverTimestamp() 
-    });
+  // AUTO-ACCEPT if both clicked at same time
+  if (myReceived.exists) {
+    await acceptFriendRequest(targetUid);
+    return;
+  }
+
+  const batch = db.batch();
+
+  batch.set(
+    myRef.collection('sentRequests').doc(targetUid),
+    {
+      status: 'pending',
+      createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+    }
+  );
+
+  batch.set(
+    targetRef.collection('receivedRequests').doc(user.uid),
+    {
+      fromUid: user.uid,
+      name: profile.name,
+      photoURL: profile.Profile_photo || null,
+      createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+    }
+  );
+
+  await batch.commit();
+};
+
     
     // Mirror data to receiver so they don't need to read sender's profile doc (security constraint)
     batch.set(receivedRef, { 
