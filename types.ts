@@ -4,12 +4,14 @@ export type ReactionType = 'like' | 'laugh' | 'hug' | 'heart' | 'wow';
 
 export type RevealRule = 'mutual' | 'time' | 'manual';
 
+import firebase from 'firebase/compat/app';
+
 export interface FriendRequest {
   uid: string;
   name: string;
   photoURL: string | null;
   status: 'pending';
-  createdAt: number;
+  createdAt: firebase.firestore.Timestamp | null;
 }
 
 export interface UserSession {
@@ -31,10 +33,11 @@ export interface UserFile {
   size: number;
   url: string;
   storagePath: string;
-  createdAt: number;
+  createdAt: firebase.firestore.Timestamp | null;
   notes: string;
   aiSummary: string;
 }
+
 
 export interface UserProfile {
   uid: string;
@@ -65,7 +68,7 @@ export interface ChatMessage {
   id: string;
   senderId: string;
   text: string;
-  timestamp: number;
+  timestamp: firebase.firestore.Timestamp;
   translatedText?: string;
   detectedLanguage?: string;
   isOriginalShown?: boolean;
