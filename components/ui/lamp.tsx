@@ -2,7 +2,7 @@
 import React from "react";
 import { motion } from "framer-motion";
 import { cn } from "../../lib/utils";
-import { YoloAnimatedBackground } from "./yolo-animated-background";
+import { WavyBackground } from "./wavy-background";
 
 export function LampContainer({
   children,
@@ -12,7 +12,13 @@ export function LampContainer({
   className?: string;
 }) {
   return (
-    <YoloAnimatedBackground className={cn("flex flex-col items-center justify-center", className)}>
+    <WavyBackground 
+      containerClassName={cn("min-h-screen flex flex-col items-center justify-center bg-[#0a0a0c]", className)}
+      backgroundFill="#0a0a0c"
+      blur={12}
+      speed="slow"
+      waveOpacity={0.4}
+    >
       {/* 
         Lamp Beams Container: 
         Adjusted scaling and opacity to create a more atmospheric "studio" beam effect.
@@ -39,9 +45,9 @@ export function LampContainer({
         />
         
         {/* Visual Softening Layers */}
-        <div className="absolute top-1/2 h-64 w-full bg-zinc-950/40 blur-3xl" />
+        <div className="absolute top-1/2 h-64 w-full bg-zinc-950/20 blur-3xl" />
         <div className="absolute top-1/2 z-50 h-px w-full bg-transparent opacity-10" />
-        <div className="absolute top-0 z-50 h-32 w-full bg-gradient-to-b from-zinc-950/80 to-transparent" />
+        <div className="absolute top-0 z-50 h-32 w-full bg-gradient-to-b from-zinc-950/60 to-transparent" />
         
         {/* Atmospheric Spotlight Bleed */}
         <div className="absolute z-10 h-80 w-[40rem] -translate-y-40 bg-indigo-600/5 blur-[140px] rounded-full" />
@@ -69,6 +75,6 @@ export function LampContainer({
       <div className="relative z-50 flex flex-col items-center justify-center px-5 pt-8 w-full">
         {children}
       </div>
-    </YoloAnimatedBackground>
+    </WavyBackground>
   );
 }
