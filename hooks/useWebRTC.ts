@@ -83,18 +83,18 @@ const stopProposal = () => {
 
 
   /* -------------------- CLEANUP -------------------- */
-  const cleanup = useCallback(() => {
-    callRef.current?.close();
-    connRef.current?.close();
-    wsRef.current?.close();
-    callRef.current = null;
-    connRef.current = null;
-    wsRef.current = null;
-    lockRef.current = null;
-    setRemoteStream(null);
-    setRemotePeerId(null);
-    setStatus("disconnected");
-  }, []);
+const cleanup = useCallback(() => {
+  callRef.current?.close();
+  connRef.current?.close();
+
+  callRef.current = null;
+  connRef.current = null;
+
+  lockRef.current = null;
+  setRemoteStream(null);
+  setRemotePeerId(null);
+  setStatus("disconnected");
+}, []);
 const skip = useCallback(() => {
   stopProposal();
   cleanup();
@@ -170,10 +170,10 @@ const connectPublicSignaling = (peerId: string) => {
     ws.send(JSON.stringify({ type: "presence", peerId }));
   };
 
- ws.onmessage = (e) => {
+ws.onmessage = (e) => {
   const msg = JSON.parse(e.data);
 
-  // 1Someone is available
+  // 1️⃣ Someone is available
   if (msg.type === "presence" && msg.peerId !== peerId) {
     if (!lockRef.current) {
       lockRef.current = msg.peerId;
@@ -204,7 +204,8 @@ const connectPublicSignaling = (peerId: string) => {
   if (msg.type === "match-propose" && msg.targetId === peerId) {
     if (!lockRef.current) {
       lockRef.current = msg.fromId;
-console.log("[SIGNAL] accept →", msg.fromId);
+      console.log("[SIGNAL] accept →", msg.fromId);
+
       ws.send(
         JSON.stringify({
           type: "match-accept",
@@ -215,7 +216,7 @@ console.log("[SIGNAL] accept →", msg.fromId);
     }
   }
 
-  // Proposal accepted → decide who calls
+  // 3️⃣ Proposal accepted → decide who calls
   if (msg.type === "match-accept" && msg.targetId === peerId) {
     if (lockRef.current === msg.fromId) {
       stopProposal();
@@ -225,20 +226,28 @@ console.log("[SIGNAL] accept →", msg.fromId);
       if (!myId) return;
 
       if (shouldInitiate(myId, msg.fromId)) {
+        console.log("[WEBRTC] calling →", msg.fromId);
         initiateP2P(msg.fromId);
       }
       // else → wait for incoming call
     }
   }
-};
 
+  // 4️⃣ Peer left during handshake ✅
+  if (msg.event === "system:member_left") {
+    console.warn("[SIGNAL] peer left during handshake");
+    stopProposal();
+    lockRef.current = null;
+    setStatus("matching");
+  }
+};
 
 ws.onclose = () => {
   stopProposal();
   lockRef.current = null;
   setStatus("matching");
 };
-
+};
   /* -------------------- PEER INIT -------------------- */
   useEffect(() => {
     let mounted = true;
