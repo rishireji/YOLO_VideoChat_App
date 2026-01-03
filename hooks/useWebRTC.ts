@@ -65,6 +65,22 @@ export const useWebRTC = (
   const connRef = useRef<DataConnection | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const lockRef = useRef<string | null>(null);
+  const proposalIntervalRef = useRef<number | null>(null);
+  const handshakeTimeoutRef = useRef<number | null>(null);
+
+  // 🔴 STOP ongoing match proposals & handshakes
+const stopProposal = () => {
+  if (proposalIntervalRef.current) {
+    clearInterval(proposalIntervalRef.current);
+    proposalIntervalRef.current = null;
+  }
+  if (handshakeTimeoutRef.current) {
+    clearTimeout(handshakeTimeoutRef.current);
+    handshakeTimeoutRef.current = null;
+  }
+};
+
+
 
   /* -------------------- CLEANUP -------------------- */
   const cleanup = useCallback(() => {
@@ -80,9 +96,16 @@ export const useWebRTC = (
     setStatus("disconnected");
   }, []);
 const skip = useCallback(() => {
+  stopProposal();
   cleanup();
   setStatus("matching");
+
+  const peerId = peerRef.current?.id;
+  if (peerId && wsRef.current?.readyState === WebSocket.OPEN) {
+    wsRef.current.send(JSON.stringify({ type: "presence", peerId }));
+  }
 }, [cleanup]);
+
 
   /* -------------------- MEDIA -------------------- */
   const initMedia = async () => {
@@ -97,6 +120,7 @@ const skip = useCallback(() => {
   /* -------------------- P2P SETUP -------------------- */
   const setupCallHandlers = (call: MediaConnection) => {
     call.on("stream", (stream) => {
+      console.log("[WEBRTC] stream received");
       setRemoteStream(stream);
       setRemotePeerId(call.peer);
       setStatus("connected");
@@ -123,6 +147,7 @@ const skip = useCallback(() => {
     if (!peerRef.current || !localStream) return;
 
     if (shouldInitiate(peerRef.current.id, remoteId)) {
+      console.log("[WEBRTC] calling →", remoteId);
       const call = peerRef.current.call(remoteId, localStream);
       const conn = peerRef.current.connect(remoteId, { reliable: true });
       setupCallHandlers(call);
@@ -145,44 +170,74 @@ const connectPublicSignaling = (peerId: string) => {
     ws.send(JSON.stringify({ type: "presence", peerId }));
   };
 
-  ws.onmessage = (e) => {
-    const msg = JSON.parse(e.data);
+ ws.onmessage = (e) => {
+  const msg = JSON.parse(e.data);
 
-    // Someone appeared
-    if (msg.type === "presence" && msg.peerId !== peerId && !lockRef.current) {
+  // 1Someone is available
+  if (msg.type === "presence" && msg.peerId !== peerId) {
+    if (!lockRef.current) {
       lockRef.current = msg.peerId;
 
+      const propose = () => {
+        console.log("[SIGNAL] propose →", msg.peerId);
+        ws.send(
+          JSON.stringify({
+            type: "match-propose",
+            targetId: msg.peerId,
+            fromId: peerId,
+          })
+        );
+      };
+
+      propose();
+      proposalIntervalRef.current = window.setInterval(propose, 1500);
+
+      handshakeTimeoutRef.current = window.setTimeout(() => {
+        stopProposal();
+        lockRef.current = null;
+        setStatus("matching");
+      }, 7000);
+    }
+  }
+
+  // 2️⃣ Someone proposes to us
+  if (msg.type === "match-propose" && msg.targetId === peerId) {
+    if (!lockRef.current) {
+      lockRef.current = msg.fromId;
+console.log("[SIGNAL] accept →", msg.fromId);
       ws.send(
         JSON.stringify({
           type: "match-accept",
-          targetId: msg.peerId,
+          targetId: msg.fromId,
           fromId: peerId,
         })
       );
     }
+  }
 
-    // Match accepted → decide who calls
-    if (msg.type === "match-accept" && msg.targetId === peerId) {
-      if (lockRef.current === msg.fromId) {
-        setStatus("connecting");
+  // Proposal accepted → decide who calls
+  if (msg.type === "match-accept" && msg.targetId === peerId) {
+    if (lockRef.current === msg.fromId) {
+      stopProposal();
+      setStatus("connecting");
 
-        const myPeerId = peerRef.current?.id;
-        if (!myPeerId) return;
+      const myId = peerRef.current?.id;
+      if (!myId) return;
 
-        if (shouldInitiate(myPeerId, msg.fromId)) {
-          initiateP2P(msg.fromId);
-        }
-        // else: wait for incoming call
+      if (shouldInitiate(myId, msg.fromId)) {
+        initiateP2P(msg.fromId);
       }
+      // else → wait for incoming call
     }
-  };
-
-  ws.onclose = () => {
-    cleanup();
-  };
+  }
 };
 
 
+ws.onclose = () => {
+  stopProposal();
+  lockRef.current = null;
+  setStatus("matching");
+};
 
   /* -------------------- PEER INIT -------------------- */
   useEffect(() => {
@@ -216,18 +271,24 @@ peer.on("call", (incoming) => {
   }
 
   setStatus("connecting");
+  console.log("[WEBRTC] answering →", incoming.peer);
   incoming.answer(localStream);
   setupCallHandlers(incoming);
 });
 
-      peer.on("connection", (conn) => {
-        if (!shouldInitiate(peer.id, conn.peer)) {
-          setupDataHandlers(conn);
-        } else {
-          conn.close();
-        }
-      });
-    };
+ peer.on("connection", (conn) => {
+  if (!lockRef.current || conn.peer !== lockRef.current) {
+    conn.close();
+    return;
+  }
+
+  if (!shouldInitiate(peer.id, conn.peer)) {
+    setupDataHandlers(conn);
+  } else {
+    conn.close();
+  }
+});
+
 
     init();
     return () => {
