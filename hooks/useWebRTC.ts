@@ -247,7 +247,8 @@ ws.onclose = () => {
   lockRef.current = null;
   setStatus("matching");
 };
-};
+}; // closes connectPublicSignaling ✅
+
   /* -------------------- PEER INIT -------------------- */
   useEffect(() => {
     let mounted = true;
