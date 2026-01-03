@@ -131,36 +131,58 @@ const skip = useCallback(() => {
   };
 
   /* -------------------- SIGNALING -------------------- */
-  const connectPublicSignaling = (peerId: string) => {
-    const channel = REGION_CHANNEL_MAP[region];
-    const ws = new WebSocket(
-      `wss://${PIESOCKET_CLUSTER}/v3/${channel}?api_key=${SIGNALING_API_KEY}&presence=true`
-    );
-    wsRef.current = ws;
+const connectPublicSignaling = (peerId: string) => {
+  const channel = REGION_CHANNEL_MAP[region];
 
-    ws.onopen = () => {
-      setStatus("matching");
-      ws.send(JSON.stringify({ type: "presence", peerId }));
-    };
+  const ws = new WebSocket(
+    `wss://${PIESOCKET_CLUSTER}/v3/${channel}?api_key=${SIGNALING_API_KEY}&presence=true`
+  );
 
-    ws.onmessage = (e) => {
-      const msg = JSON.parse(e.data);
-      if (msg.type === "presence" && msg.peerId !== peerId && !lockRef.current) {
-        lockRef.current = msg.peerId;
-        ws.send(
-          JSON.stringify({
-            type: "match-accept",
-            targetId: msg.peerId,
-            fromId: peerId,
-          })
-        );
-      }
-      if (msg.type === "match-accept" && msg.targetId === peerId) {
-        setStatus("connecting");
-        initiateP2P(msg.fromId);
-      }
-    };
+  wsRef.current = ws;
+
+  ws.onopen = () => {
+    setStatus("matching");
+    ws.send(JSON.stringify({ type: "presence", peerId }));
   };
+
+  ws.onmessage = (e) => {
+    const msg = JSON.parse(e.data);
+
+    // Someone appeared
+    if (msg.type === "presence" && msg.peerId !== peerId && !lockRef.current) {
+      lockRef.current = msg.peerId;
+
+      ws.send(
+        JSON.stringify({
+          type: "match-accept",
+          targetId: msg.peerId,
+          fromId: peerId,
+        })
+      );
+    }
+
+    // Match accepted → decide who calls
+    if (msg.type === "match-accept" && msg.targetId === peerId) {
+      if (lockRef.current === msg.fromId) {
+        setStatus("connecting");
+
+        const myPeerId = peerRef.current?.id;
+        if (!myPeerId) return;
+
+        if (shouldInitiate(myPeerId, msg.fromId)) {
+          initiateP2P(msg.fromId);
+        }
+        // else: wait for incoming call
+      }
+    }
+  };
+
+  ws.onclose = () => {
+    cleanup();
+  };
+};
+
+
 
   /* -------------------- PEER INIT -------------------- */
   useEffect(() => {
@@ -182,14 +204,21 @@ const skip = useCallback(() => {
         if (mode === "public") connectPublicSignaling(id);
       });
 
-      peer.on("call", (call) => {
-        if (!shouldInitiate(peer.id, call.peer)) {
-          call.answer(stream);
-          setupCallHandlers(call);
-        } else {
-          call.close();
-        }
-      });
+peer.on("call", (incoming) => {
+  if (!lockRef.current || incoming.peer !== lockRef.current) {
+    incoming.close();
+    return;
+  }
+
+  if (!localStream) {
+    incoming.close();
+    return;
+  }
+
+  setStatus("connecting");
+  incoming.answer(localStream);
+  setupCallHandlers(incoming);
+});
 
       peer.on("connection", (conn) => {
         if (!shouldInitiate(peer.id, conn.peer)) {
