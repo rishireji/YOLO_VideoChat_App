@@ -79,6 +79,10 @@ export const useWebRTC = (
     setRemotePeerId(null);
     setStatus("disconnected");
   }, []);
+const skip = useCallback(() => {
+  cleanup();
+  setStatus("matching");
+}, [cleanup]);
 
   /* -------------------- MEDIA -------------------- */
   const initMedia = async () => {
