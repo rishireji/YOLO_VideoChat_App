@@ -94,7 +94,27 @@ const handleMessageReceived = useCallback(async (text: string) => {
     );
   }
 }, [session?.preferredLanguage, translateText]);
-  const { localStream, remoteStream, status, sendMessage, sendReaction, skip, isMuted, isVideoOff, toggleMute, toggleVideo, remotePeerId } = useWebRTC(session?.region || 'global', handleReactionReceived, handleMessageReceived);
+  const {
+  localStream,
+  remoteStream,
+  status,
+  sendMessage,
+  sendReaction,
+  skip,
+  isMuted,
+  isVideoOff,
+  toggleMute,
+  toggleVideo,
+  remotePeerId,
+  revealIdentity,
+} = useWebRTC(
+  session?.region || 'global', // region
+  "public",                   // MatchMode
+  undefined,                  // targetUid (public match)
+  handleMessageReceived,      // onMessage
+  handleReactionReceived      // onReaction
+);
+
 
   const friendStatus = useMemo(() => {
     if (!remoteUid) return 'none';
@@ -121,8 +141,11 @@ const handleMessageReceived = useCallback(async (text: string) => {
   useEffect(() => {
     if (appState === AppState.EXHAUSTED) return;
     switch (status) {
-      case 'matching': case 'connecting': case 'generating_id': case 'signaling_offline':
-        setAppState(AppState.MATCHMAKING); break;
+      case 'matching':
+      case 'connecting':
+      case 'generating_id':
+  setAppState(AppState.MATCHMAKING);
+  break;
       case 'connected':
         setAppState(AppState.CONNECTED);
         if (remotePeerId && hasDeductedRef.current !== remotePeerId) {
@@ -135,18 +158,24 @@ const handleMessageReceived = useCallback(async (text: string) => {
     }
   }, [status, remotePeerId, deductCoins, appState]);
 
-  const handleSocialAction = async () => {
-    if (!user || !remoteUid) return;
-    try {
-      if (friendStatus === 'none') {
-        await sendFriendRequest(remoteUid);
-      } else if (friendStatus === 'received') {
-        await acceptFriendRequest(remoteUid);
-      }
-    } catch (err) {
-      console.error("[YOLO Social] Social action failed:", err);
+const handleSocialAction = async () => {
+  if (!user || !remoteUid) return;
+
+  try {
+    if (friendStatus === 'none') {
+      // 🔑 reveal identity FIRST
+      revealIdentity();
+
+      // then persist request
+      await sendFriendRequest(remoteUid);
+    } else if (friendStatus === 'received') {
+      await acceptFriendRequest(remoteUid);
     }
-  };
+  } catch (err) {
+    console.error("[YOLO Social] Social action failed:", err);
+  }
+};
+
 
   return (
     <div className="flex flex-col lg:flex-row h-screen w-full bg-zinc-950 overflow-hidden relative font-inter pt-20">

@@ -57,6 +57,8 @@ export const useWebRTC = (
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
   const [remotePeerId, setRemotePeerId] = useState<string | null>(null);
+  const [isMuted, setIsMuted] = useState(false);
+  const [isVideoOff, setIsVideoOff] = useState(false);
 
   const peerRef = useRef<Peer | null>(null);
   const callRef = useRef<MediaConnection | null>(null);
@@ -221,15 +223,45 @@ export const useWebRTC = (
       displayName: user.displayName,
     });
   };
+const toggleMute = useCallback(() => {
+  if (!localStream) return;
 
-  return {
-    status,
-    localStream,
-    remoteStream,
-    remotePeerId,
-    sendMessage,
-    sendReaction,
-    revealIdentity,
-    cleanup,
-  };
+  const audioTrack = localStream.getAudioTracks()[0];
+  if (!audioTrack) return;
+
+  audioTrack.enabled = !audioTrack.enabled;
+  setIsMuted(!audioTrack.enabled);
+}, [localStream]);
+
+const toggleVideo = useCallback(() => {
+  if (!localStream) return;
+
+  const videoTrack = localStream.getVideoTracks()[0];
+  if (!videoTrack) return;
+
+  videoTrack.enabled = !videoTrack.enabled;
+  setIsVideoOff(!videoTrack.enabled);
+}, [localStream]);
+
+return {
+  status,
+  localStream,
+  remoteStream,
+  remotePeerId,
+
+  // messaging
+  sendMessage,
+  sendReaction,
+
+  // identity
+  revealIdentity,
+
+  // controls (RESTORED)
+  isMuted,
+  isVideoOff,
+  toggleMute,
+  toggleVideo,
+  skip,
+  cleanup,
+};
 };
