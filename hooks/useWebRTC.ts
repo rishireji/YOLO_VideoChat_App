@@ -170,85 +170,83 @@ const connectPublicSignaling = (peerId: string) => {
     ws.send(JSON.stringify({ type: "presence", peerId }));
   };
 
-ws.onmessage = (e) => {
-  const msg = JSON.parse(e.data);
+  ws.onmessage = (e) => {
+    const msg = JSON.parse(e.data);
 
-  // 1️⃣ Someone is available
-  if (msg.type === "presence" && msg.peerId !== peerId) {
-    if (!lockRef.current) {
-      lockRef.current = msg.peerId;
+    // 1️⃣ Someone is available
+    if (msg.type === "presence" && msg.peerId !== peerId) {
+      if (!lockRef.current) {
+        lockRef.current = msg.peerId;
 
-      const propose = () => {
-        console.log("[SIGNAL] propose →", msg.peerId);
+        const propose = () => {
+          console.log("[SIGNAL] propose →", msg.peerId);
+          ws.send(
+            JSON.stringify({
+              type: "match-propose",
+              targetId: msg.peerId,
+              fromId: peerId,
+            })
+          );
+        };
+
+        propose();
+        proposalIntervalRef.current = window.setInterval(propose, 1500);
+
+        handshakeTimeoutRef.current = window.setTimeout(() => {
+          stopProposal();
+          lockRef.current = null;
+          setStatus("matching");
+        }, 7000);
+      }
+    }
+
+    // 2️⃣ Someone proposes to us
+    if (msg.type === "match-propose" && msg.targetId === peerId) {
+      if (!lockRef.current) {
+        lockRef.current = msg.fromId;
+        console.log("[SIGNAL] accept →", msg.fromId);
+
         ws.send(
           JSON.stringify({
-            type: "match-propose",
-            targetId: msg.peerId,
+            type: "match-accept",
+            targetId: msg.fromId,
             fromId: peerId,
           })
         );
-      };
-
-      propose();
-      proposalIntervalRef.current = window.setInterval(propose, 1500);
-
-      handshakeTimeoutRef.current = window.setTimeout(() => {
-        stopProposal();
-        lockRef.current = null;
-        setStatus("matching");
-      }, 7000);
-    }
-  }
-
-  // 2️⃣ Someone proposes to us
-  if (msg.type === "match-propose" && msg.targetId === peerId) {
-    if (!lockRef.current) {
-      lockRef.current = msg.fromId;
-      console.log("[SIGNAL] accept →", msg.fromId);
-
-      ws.send(
-        JSON.stringify({
-          type: "match-accept",
-          targetId: msg.fromId,
-          fromId: peerId,
-        })
-      );
-    }
-  }
-
-  // 3️⃣ Proposal accepted → decide who calls
-  if (msg.type === "match-accept" && msg.targetId === peerId) {
-    if (lockRef.current === msg.fromId) {
-      stopProposal();
-      setStatus("connecting");
-
-      const myId = peerRef.current?.id;
-      if (!myId) return;
-
-      if (shouldInitiate(myId, msg.fromId)) {
-        console.log("[WEBRTC] calling →", msg.fromId);
-        initiateP2P(msg.fromId);
       }
-      // else → wait for incoming call
     }
-  }
 
-  // 4️⃣ Peer left during handshake ✅
-  if (msg.event === "system:member_left") {
-    console.warn("[SIGNAL] peer left during handshake");
+    // 3️⃣ Proposal accepted
+    if (msg.type === "match-accept" && msg.targetId === peerId) {
+      if (lockRef.current === msg.fromId) {
+        stopProposal();
+        setStatus("connecting");
+
+        const myId = peerRef.current?.id;
+        if (!myId) return;
+
+        if (shouldInitiate(myId, msg.fromId)) {
+          console.log("[WEBRTC] calling →", msg.fromId);
+          initiateP2P(msg.fromId);
+        }
+      }
+    }
+
+    // 4️⃣ Peer left
+    if (msg.event === "system:member_left") {
+      console.warn("[SIGNAL] peer left during handshake");
+      stopProposal();
+      lockRef.current = null;
+      setStatus("matching");
+    }
+  };
+
+  ws.onclose = () => {
     stopProposal();
     lockRef.current = null;
     setStatus("matching");
-  }
+  };
 };
-
-ws.onclose = () => {
-  stopProposal();
-  lockRef.current = null;
-  setStatus("matching");
-};
-}; // closes connectPublicSignaling ✅
-
   /* -------------------- PEER INIT -------------------- */
   useEffect(() => {
     let mounted = true;
