@@ -70,6 +70,8 @@ export const useWebRTC = (
   const lockRef = useRef<string | null>(null);
   const proposalIntervalRef = useRef<number | null>(null);
   const handshakeTimeoutRef = useRef<number | null>(null);
+  const localStreamRef = useRef<MediaStream | null>(null);
+
 
   // 🔴 STOP ongoing match proposals & handshakes
 const stopProposal = () => {
@@ -117,6 +119,7 @@ const skip = useCallback(() => {
       audio: true,
     });
     setLocalStream(stream);
+    localStreamRef.current = stream;
     return stream;
   };
 
@@ -146,18 +149,20 @@ const skip = useCallback(() => {
     connRef.current = conn;
   };
 
-  const initiateP2P = (remoteId: string) => {
-    if (!peerRef.current || !localStream) return;
+const initiateP2P = (remoteId: string) => {
+  const peer = peerRef.current;
+  const stream = localStreamRef.current;
 
-    if (shouldInitiate(peerRef.current.id, remoteId)) {
-      console.log("[WEBRTC] calling →", remoteId);
-      const call = peerRef.current.call(remoteId, localStream);
-      const conn = peerRef.current.connect(remoteId, { reliable: true });
-      setupCallHandlers(call);
-      setupDataHandlers(conn);
-    }
-  };
+  if (!peer || !stream) return;
 
+  if (shouldInitiate(peer.id, remoteId)) {
+    console.log("[WEBRTC] calling →", remoteId);
+    const call = peer.call(remoteId, stream);
+    const conn = peer.connect(remoteId, { reliable: true });
+    setupCallHandlers(call);
+    setupDataHandlers(conn);
+  }
+};
   /* -------------------- SIGNALING -------------------- */
 const connectPublicSignaling = (peerId: string) => {
   const channel = REGION_CHANNEL_MAP[region];
@@ -290,21 +295,22 @@ useEffect(() => {
     });
 
     // ✅ MOVE THIS INSIDE init
-    peer.on("call", (incoming) => {
-      if (!lockRef.current || incoming.peer !== lockRef.current) {
-        incoming.close();
-        return;
-      }
+peer.on("call", (incoming) => {
+  if (!lockRef.current || incoming.peer !== lockRef.current) {
+    incoming.close();
+    return;
+  }
 
-      if (!localStream) {
-        incoming.close();
-        return;
-      }
+  const stream = localStreamRef.current;
+  if (!stream) {
+    incoming.close();
+    return;
+  }
 
-      setStatus("connecting");
-      incoming.answer(localStream);
-      setupCallHandlers(incoming);
-    });
+  setStatus("connecting");
+  incoming.answer(stream);
+  setupCallHandlers(incoming);
+});
 
     // ✅ MOVE THIS INSIDE init
     peer.on("connection", (conn) => {
