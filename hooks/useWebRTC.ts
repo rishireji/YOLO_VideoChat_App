@@ -39,7 +39,7 @@ const ICE_CONFIG = {
   ],
 };
 
-const BLACKLIST_TTL = 60_000; // 1 minute
+const BLACKLIST_TTL = 30_000; // Reduced to 30s for faster retries during dev
 
 export const useWebRTC = (
   region: Region,
@@ -56,7 +56,7 @@ export const useWebRTC = (
   const [isMuted, setIsMuted] = useState(false);
   const [isVideoOff, setIsVideoOff] = useState(false);
 
-  // Refs for stable access inside callbacks
+  // Refs
   const peerRef = useRef<Peer | null>(null);
   const callRef = useRef<MediaConnection | null>(null);
   const connRef = useRef<DataConnection | null>(null);
@@ -67,6 +67,7 @@ export const useWebRTC = (
   const blacklistRef = useRef<Set<string>>(new Set());
   const proposalIntervalRef = useRef<any>(null);
   const handshakeTimeoutRef = useRef<any>(null);
+  const connectionTimeoutRef = useRef<any>(null); // New timeout for "Connecting" hang
   const isClosingRef = useRef(false);
 
   /* -------------------- HELPERS -------------------- */
@@ -77,7 +78,7 @@ export const useWebRTC = (
     }
   }, []);
 
-  const stopProposal = useCallback(() => {
+  const stopTimers = useCallback(() => {
     if (proposalIntervalRef.current) {
       clearInterval(proposalIntervalRef.current);
       proposalIntervalRef.current = null;
@@ -86,13 +87,16 @@ export const useWebRTC = (
       clearTimeout(handshakeTimeoutRef.current);
       handshakeTimeoutRef.current = null;
     }
+    if (connectionTimeoutRef.current) {
+      clearTimeout(connectionTimeoutRef.current);
+      connectionTimeoutRef.current = null;
+    }
   }, []);
 
   const cleanup = useCallback(() => {
     lockRef.current = null;
-    stopProposal();
+    stopTimers();
 
-    // Close existing connections
     if (callRef.current) {
       callRef.current.close();
       callRef.current = null;
@@ -103,10 +107,12 @@ export const useWebRTC = (
     }
     
     setRemoteStream(null);
-  }, [stopProposal]);
+  }, [stopTimers]);
 
   const skip = useCallback(
     (shouldBlacklist: boolean = false) => {
+      console.log('Skipping... Blacklist:', shouldBlacklist);
+      
       if (shouldBlacklist && lockRef.current) {
         const target = lockRef.current;
         blacklistRef.current.add(target);
@@ -114,11 +120,9 @@ export const useWebRTC = (
       }
 
       cleanup();
-      
-      // Reset status to matching immediately
       setStatus('matching');
 
-      // Re-broadcast presence to find new peer
+      // Re-announce presence
       if (peerRef.current?.id) {
         broadcast({
           type: 'presence',
@@ -134,23 +138,25 @@ export const useWebRTC = (
 
   const setupCallHandlers = useCallback(
     (call: MediaConnection) => {
+      console.log('Setting up call handlers for:', call.peer);
+      
       call.on('stream', (remote) => {
-        console.log('Stream received from:', call.peer);
+        console.log('Stream received!');
+        stopTimers(); // Success! Stop the fail-safe timers
         remotePeerIdRef.current = call.peer;
-        stopProposal();
         setRemoteStream(remote);
         setStatus('connected');
       });
 
       call.on('close', () => skip(false));
-      call.on('error', (err) => {
-        console.error('Call error:', err);
+      call.on('error', (e) => {
+        console.error('Call error:', e);
         skip(true);
       });
 
       callRef.current = call;
     },
-    [skip, stopProposal]
+    [skip, stopTimers]
   );
 
   const setupDataHandlers = useCallback(
@@ -158,12 +164,9 @@ export const useWebRTC = (
       conn.on('data', (data: any) => {
         if (data.type === 'chat') onMessageReceived?.(data.text);
         if (data.type === 'reaction') onReactionReceived?.(data.value);
-        if (data.type === 'identity') console.log('Identity revealed:', data.uid);
       });
-
       conn.on('close', () => skip(false));
       conn.on('error', () => skip(false));
-
       connRef.current = conn;
     },
     [skip, onMessageReceived, onReactionReceived]
@@ -173,35 +176,40 @@ export const useWebRTC = (
     (remoteId: string, stream: MediaStream) => {
       setStatus('connecting');
       
-      if (!peerRef.current || peerRef.current.destroyed) return;
+      // Safety: If connection doesn't succeed in 10s, abort and skip
+      if (connectionTimeoutRef.current) clearTimeout(connectionTimeoutRef.current);
+      connectionTimeoutRef.current = setTimeout(() => {
+        if (status !== 'connected') {
+          console.warn('Connection timeout - WebRTC failed to establish');
+          skip(true);
+        }
+      }, 10000);
 
-      console.log('Initiating P2P Call to:', remoteId);
+      setTimeout(() => {
+        if (!peerRef.current || peerRef.current.destroyed) return;
 
-      // 1. Establish Data Connection (Chat/Signals)
-      try {
-        const conn = peerRef.current.connect(remoteId, { reliable: true });
-        if (conn) setupDataHandlers(conn);
-      } catch (e) {
-        console.error('Data connection failed', e);
-      }
+        try {
+          const conn = peerRef.current.connect(remoteId, { reliable: true });
+          if (conn) setupDataHandlers(conn);
 
-      // 2. Establish Media Call
-      try {
-        const call = peerRef.current.call(remoteId, stream);
-        if (call) setupCallHandlers(call);
-      } catch (e) {
-        console.error('Media call failed', e);
-        skip(true);
-      }
+          const call = peerRef.current.call(remoteId, stream);
+          if (call) setupCallHandlers(call);
+        } catch (e) {
+          console.error('P2P Init Error:', e);
+          skip(true);
+        }
+      }, 500); // Small delay to let PeerJS stabilize
     },
-    [setupCallHandlers, setupDataHandlers, skip]
+    [setupCallHandlers, setupDataHandlers, skip, status]
   );
 
-  /* -------------------- SIGNALING (The Fix) -------------------- */
+  /* -------------------- SIGNALING -------------------- */
 
   const connectSignaling = useCallback(
     (myId: string, stream: MediaStream) => {
       const channel = REGION_CHANNEL_MAP[region];
+      console.log(`Connecting to Signaling Channel: ${channel} (${region})`);
+      
       const ws = new WebSocket(
         `wss://${PIESOCKET_CLUSTER}/v3/${channel}?api_key=${SIGNALING_API_KEY}&presence=true`
       );
@@ -209,22 +217,20 @@ export const useWebRTC = (
       wsRef.current = ws;
 
       ws.onopen = () => {
-        console.log('Signaling Connected');
         setStatus('matching');
         broadcast({ type: 'presence', peerId: myId });
       };
 
       ws.onmessage = (e) => {
         const msg = JSON.parse(e.data);
-        if(msg.peerId === myId) return; // Ignore own messages
+        if (msg.peerId === myId) return;
 
-        // 1. PRESENCE: Found a potential match
+        // 1. PRESENCE (Discovery)
         if (msg.type === 'presence') {
-          // Only lock if we are free and they are not blacklisted
           if (!lockRef.current && !blacklistRef.current.has(msg.peerId)) {
+            console.log('Found peer:', msg.peerId);
             lockRef.current = msg.peerId;
 
-            // Start sending proposals
             const propose = () =>
               broadcast({
                 type: 'match-propose',
@@ -232,60 +238,54 @@ export const useWebRTC = (
                 fromId: myId,
               });
 
-            stopProposal();
+            stopTimers();
             propose();
             proposalIntervalRef.current = setInterval(propose, 1000);
 
-            // Give up if no handshake after 6s
+            // Fail-safe: If handshake takes > 5s, unlock and retry
             handshakeTimeoutRef.current = setTimeout(() => {
               if (lockRef.current === msg.peerId) {
-                console.log('Handshake timeout, skipping...');
+                console.log('Handshake timed out');
                 skip(true);
               }
-            }, 6000);
+            }, 5000);
           }
         }
 
-        // 2. PROPOSAL RECEIVED
+        // 2. PROPOSE
         if (msg.type === 'match-propose' && msg.targetId === myId) {
-          // Logic: We accept if we are free OR if we are locked to *this specific user* (Collision fix)
-          const isFree = !lockRef.current;
-          const isLockedToSender = lockRef.current === msg.fromId;
-
-          if (isFree || isLockedToSender) {
-            // Ensure we are locked to them now
+          // Double-Lock Fix: Accept if we are free OR if we are locked to *them*
+          if (!lockRef.current || lockRef.current === msg.fromId) {
             lockRef.current = msg.fromId;
-            stopProposal(); 
+            stopTimers();
             setStatus('connecting');
 
-            // Send acceptance
             broadcast({
               type: 'match-accept',
               targetId: msg.fromId,
               fromId: myId,
             });
+            
+            // Set a timeout for the connecting phase here too
+             connectionTimeoutRef.current = setTimeout(() => {
+                console.log('Stuck in connecting state (responder)... skipping');
+                skip(true);
+             }, 8000);
           }
         }
 
-        // 3. ACCEPTANCE RECEIVED
+        // 3. ACCEPT
         if (msg.type === 'match-accept' && msg.targetId === myId) {
           if (lockRef.current === msg.fromId) {
-            stopProposal();
-            
-            // TIE-BREAKER: To prevent both sides calling each other and failing,
-            // only the user with the "larger" PeerID initiates the call.
-            // The other user waits for the incoming call event.
+            stopTimers();
+            // Tie-Breaker: Higher ID initiates the call
             if (myId > msg.fromId) {
+              console.log('I am the caller (Higher ID)');
               initiateP2P(msg.fromId, stream);
             } else {
-              console.log('Waiting for peer to call (I have lower ID)...');
+              console.log('I am the callee (Lower ID) - Waiting for stream...');
             }
           }
-        }
-
-        // 4. REMOTE DISCONNECT
-        if (msg.event === 'system:member_left' && lockRef.current === msg.peerId) {
-          skip(false);
         }
       };
 
@@ -296,7 +296,7 @@ export const useWebRTC = (
         }
       };
     },
-    [region, broadcast, initiateP2P, skip, stopProposal]
+    [region, broadcast, initiateP2P, skip, stopTimers]
   );
 
   /* -------------------- INIT -------------------- */
@@ -306,7 +306,8 @@ export const useWebRTC = (
 
     const init = async () => {
       if (!session?.id) return;
-
+      
+      console.log('Initializing WebRTC for Region:', region);
       setStatus('generating_id');
 
       let stream: MediaStream;
@@ -318,31 +319,28 @@ export const useWebRTC = (
         if (!mounted) return;
         setLocalStream(stream);
       } catch (err) {
-        console.error('Failed to get user media', err);
+        console.error('Media Error:', err);
         setStatus('error');
         return;
       }
 
-      const peer = new Peer(`yolo_${session.id}_${Math.random().toString(36).substr(2, 9)}`, {
-        config: ICE_CONFIG,
-        secure: true,
-      });
-
+      // Generate Peer ID
+      const peerId = `yolo_${session.id}_${Math.random().toString(36).substr(2, 6)}`;
+      const peer = new Peer(peerId, { config: ICE_CONFIG });
       peerRef.current = peer;
 
       peer.on('open', (id) => {
+        console.log('My Peer ID:', id);
         if (mounted) connectSignaling(id, stream);
       });
 
-      // ANSWERING LOGIC (Passive Side)
       peer.on('call', (incoming) => {
-        console.log('Incoming call from:', incoming.peer);
-        // Only answer if this is the person we locked onto
         if (lockRef.current === incoming.peer) {
+          console.log('Answering incoming call...');
           incoming.answer(stream);
           setupCallHandlers(incoming);
         } else {
-          console.warn('Rejected call from unknown peer:', incoming.peer);
+          console.warn('Blocked call from unknown peer');
           incoming.close();
         }
       });
@@ -354,13 +352,10 @@ export const useWebRTC = (
           conn.close();
         }
       });
-
+      
       peer.on('error', (err) => {
-        console.error('PeerJS error:', err);
-        // Only skip if the error is fatal for the connection
-        if (err.type === 'peer-unavailable' || err.type === 'network') {
-            skip(true);
-        }
+          console.error('Peer Error:', err);
+          if(err.type === 'peer-unavailable') skip(true);
       });
     };
 
@@ -372,20 +367,14 @@ export const useWebRTC = (
       cleanup();
       peerRef.current?.destroy();
       wsRef.current?.close();
-      
-      // Stop all tracks on unmount
       setLocalStream(prev => {
         prev?.getTracks().forEach(t => t.stop());
         return null;
       });
     };
-  }, [session?.id]); // Only re-run if session ID changes
+  }, [session?.id, region]); // Re-init if region changes
 
-  const revealIdentity = useCallback(() => {
-    if (!connRef.current?.open || !session) return;
-    connRef.current.send({ type: 'identity', uid: session.id });
-  }, [session]);
-
+  // ... (API returns same as before)
   return {
     localStream,
     remoteStream,
@@ -393,27 +382,25 @@ export const useWebRTC = (
     status,
     sendMessage: (text: string) => connRef.current?.open && connRef.current.send({ type: 'chat', text }),
     sendReaction: (value: ReactionType) => connRef.current?.open && connRef.current.send({ type: 'reaction', value }),
-    revealIdentity,
+    revealIdentity: () => {
+      if (connRef.current?.open && session) {
+        connRef.current.send({ type: 'identity', uid: session.id });
+      }
+    },
     skip: () => skip(false),
     isMuted,
     isVideoOff,
     toggleMute: () => {
-      if (localStream) {
-        const t = localStream.getAudioTracks()[0];
-        if (t) {
-          t.enabled = isMuted;
-          setIsMuted(!isMuted);
+        if (localStream) {
+            const t = localStream.getAudioTracks()[0];
+            if(t) { t.enabled = isMuted; setIsMuted(!isMuted); }
         }
-      }
     },
     toggleVideo: () => {
-      if (localStream) {
-        const t = localStream.getVideoTracks()[0];
-        if (t) {
-          t.enabled = isVideoOff;
-          setIsVideoOff(!isVideoOff);
+        if (localStream) {
+            const t = localStream.getVideoTracks()[0];
+            if(t) { t.enabled = isVideoOff; setIsVideoOff(!isVideoOff); }
         }
-      }
-    },
+    }
   };
 };
