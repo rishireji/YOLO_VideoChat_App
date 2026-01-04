@@ -154,15 +154,16 @@ export const useWebRTC = (
     [skip, onMessageReceived, onReactionReceived]
   );
 
-  const revealIdentity = useCallback(() => {
-  if (!connRef.current?.open || !session?.user) return;
+ const revealIdentity = useCallback(() => {
+  if (!connRef.current?.open || !session) return;
 
   connRef.current.send({
     type: 'identity',
-    uid: session.user.uid,
-    displayName: session.user.displayName,
+    uid: session.id,
+    displayName: session.displayName ?? 'Anonymous',
   });
 }, [session]);
+
 
 
   const initiateP2P = useCallback(
