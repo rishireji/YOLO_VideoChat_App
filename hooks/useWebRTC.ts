@@ -85,6 +85,16 @@ const cleanup = useCallback(() => {
   setRemotePeerId(null);
   setStatus("disconnected");
 }, []);
+const skip = useCallback(() => {
+  cleanup();
+
+  const myId = peerRef.current?.id;
+  if (myId && wsRef.current?.readyState === WebSocket.OPEN) {
+    wsRef.current.send(JSON.stringify({ type: "presence", peerId: myId }));
+  }
+
+  setStatus("matching");
+}, [cleanup]);
 
 
   /* -------------------- MEDIA -------------------- */
@@ -370,6 +380,7 @@ return {
   isVideoOff,
   toggleMute,
   toggleVideo,
+  skip,      
   cleanup,
 };
 };
