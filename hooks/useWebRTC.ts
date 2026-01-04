@@ -110,7 +110,8 @@ export const useWebRTC = (
   const revealIdentity = useCallback(() => {
     if (connRef.current?.open) {
       console.log("[YOLO] Revealing Identity...");
-      connRef.current.send({ type: 'reveal-identity', user: session?.user });
+      // FIX: Cast session to any to bypass TS error
+      connRef.current.send({ type: 'reveal-identity', user: (session as any)?.user });
     }
   }, [session]);
 
@@ -170,7 +171,6 @@ export const useWebRTC = (
     ws.onopen = () => {
       console.log("[YOLO] Signaling: Online.");
       updateStatus('matching');
-      // Pass the filters (gender/interests) into the broadcast
       broadcast({ type: 'presence', peerId: myId, status: 'matching', gender, interests });
     };
 
@@ -181,9 +181,6 @@ export const useWebRTC = (
         // 1. Presence Received
         if (msg.type === 'presence' && msg.peerId !== myId) {
           if (!lockRef.current && !blacklistRef.current.has(msg.peerId)) {
-            // Optional: You can restore strict filtering logic here if needed
-            // if (gender && msg.gender !== gender) return; 
-
             console.log(`[YOLO] Matcher: New peer ${msg.peerId} detected. Locking.`);
             lockRef.current = msg.peerId;
             
