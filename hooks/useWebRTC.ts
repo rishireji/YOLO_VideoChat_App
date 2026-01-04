@@ -68,26 +68,11 @@ export const useWebRTC = (
   const connRef = useRef<DataConnection | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const lockRef = useRef<string | null>(null);
-  const proposalIntervalRef = useRef<number | null>(null);
-  const handshakeTimeoutRef = useRef<number | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
+  const peersInRoomRef = useRef<Set<string>>(new Set());
 
 
-  // 🔴 STOP ongoing match proposals & handshakes
-const stopProposal = () => {
-  if (proposalIntervalRef.current) {
-    clearInterval(proposalIntervalRef.current);
-    proposalIntervalRef.current = null;
-  }
-  if (handshakeTimeoutRef.current) {
-    clearTimeout(handshakeTimeoutRef.current);
-    handshakeTimeoutRef.current = null;
-  }
-};
-
-
-
-  /* -------------------- CLEANUP -------------------- */
+ /* -------------------- CLEANUP -------------------- */
 const cleanup = useCallback(() => {
   callRef.current?.close();
   connRef.current?.close();
@@ -100,16 +85,6 @@ const cleanup = useCallback(() => {
   setRemotePeerId(null);
   setStatus("disconnected");
 }, []);
-const skip = useCallback(() => {
-  stopProposal();
-  cleanup();
-  setStatus("matching");
-
-  const peerId = peerRef.current?.id;
-  if (peerId && wsRef.current?.readyState === WebSocket.OPEN) {
-    wsRef.current.send(JSON.stringify({ type: "presence", peerId }));
-  }
-}, [cleanup]);
 
 
   /* -------------------- MEDIA -------------------- */
@@ -174,6 +149,7 @@ const connectPublicSignaling = (peerId: string) => {
   wsRef.current = ws;
 
   ws.onopen = () => {
+    peersInRoomRef.current.clear();
     setStatus("matching");
     ws.send(JSON.stringify({ type: "presence", peerId }));
   };
@@ -181,99 +157,104 @@ const connectPublicSignaling = (peerId: string) => {
   ws.onmessage = (e) => {
     const msg = JSON.parse(e.data);
 
-    // 1️⃣ Someone is available
-if (msg.type === "presence" && msg.peerId !== peerId) {
-  if (lockRef.current) return;
+    // 1️⃣ Track peers
+    if (msg.type === "presence") {
+      peersInRoomRef.current.add(msg.peerId);
+      return;
+    }
 
-  // 🔒 deterministic proposer (THIS WAS MISSING)
-  if (!shouldPropose(peerId, msg.peerId)) {
-    return; // wait for the other peer to propose
-  }
+    // 2️⃣ Exactly two peers → proposer
+    if (msg.event === "system:member_joined") {
+      const members = msg.data?.members ?? [];
+      if (members.length !== 2) return;
 
-  lockRef.current = msg.peerId;
+      const myId = peerRef.current?.id;
+      if (!myId) return;
 
-  const propose = () => {
-    console.log("[SIGNAL] propose →", msg.peerId);
-    ws.send(
-      JSON.stringify({
+const peers = Array.from(peersInRoomRef.current);
+const remoteId = peers.find(id => id !== myId);
+if (!remoteId || remoteId === myId) return;
+
+
+
+      if (lockRef.current) return;
+      if (!shouldPropose(myId, remoteId)) return;
+
+      lockRef.current = remoteId;
+
+      console.log("[SIGNAL] propose →", remoteId);
+
+      ws.send(JSON.stringify({
         type: "match-propose",
-        targetId: msg.peerId,
-        fromId: peerId,
-      })
-    );
-  };
-
-  propose();
-  proposalIntervalRef.current = window.setInterval(propose, 1500);
-
-  handshakeTimeoutRef.current = window.setTimeout(() => {
-    stopProposal();
-    lockRef.current = null;
-    setStatus("matching");
-
-    // 🔁 re-announce presence
-    const myId = peerRef.current?.id;
-    if (myId && wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({ type: "presence", peerId: myId }));
-    }
-  }, 7000);
-}
-    // 2️⃣ Someone proposes to us
-    if (msg.type === "match-propose" && msg.targetId === peerId) {
-      if (!lockRef.current) {
-        lockRef.current = msg.fromId;
-        console.log("[SIGNAL] accept →", msg.fromId);
-
-        ws.send(
-          JSON.stringify({
-            type: "match-accept",
-            targetId: msg.fromId,
-            fromId: peerId,
-          })
-        );
-      }
-    }
-
-    // 3️⃣ Proposal accepted
-    if (msg.type === "match-accept" && msg.targetId === peerId) {
-      if (lockRef.current === msg.fromId) {
-        stopProposal();
-        setStatus("connecting");
-
-        const myId = peerRef.current?.id;
-        if (!myId) return;
-
-        if (shouldInitiate(myId, msg.fromId)) {
-          console.log("[WEBRTC] calling →", msg.fromId);
-          initiateP2P(msg.fromId);
-        }
-      }
-    }
-
-    // 4️⃣ Peer left
-    if (msg.event === "system:member_left") {
-      console.warn("[SIGNAL] peer left during handshake");
-      stopProposal();
+        targetId: remoteId,
+        fromId: myId,
+      }));
+       setTimeout(() => {
+    if (lockRef.current === remoteId) {
+      console.warn("[SIGNAL] handshake timeout");
       lockRef.current = null;
       setStatus("matching");
-       const myId = peerRef.current?.id;
+
+      const myId = peerRef.current?.id;
+      if (myId && wsRef.current?.readyState === WebSocket.OPEN) {
+        wsRef.current.send(JSON.stringify({ type: "presence", peerId: myId }));
+      }
+    }
+  }, 6000);
+      return;
+    }
+
+    // 3️⃣ Receive proposal
+    if (msg.type === "match-propose" && msg.targetId === peerRef.current?.id) {
+      if (lockRef.current) return;
+
+      lockRef.current = msg.fromId;
+
+      console.log("[SIGNAL] accept →", msg.fromId);
+
+      ws.send(JSON.stringify({
+        type: "match-accept",
+        targetId: msg.fromId,
+        fromId: peerRef.current!.id,
+      }));
+      return;
+    }
+
+    // 4️⃣ Accepted → start WebRTC
+    if (msg.type === "match-accept" && msg.targetId === peerRef.current?.id) {
+      if (lockRef.current !== msg.fromId) return;
+
+      console.log("[WEBRTC] calling →", msg.fromId);
+      setStatus("connecting");
+      initiateP2P(msg.fromId);
+      return;
+    }
+
+    // 5️⃣ Peer left
+    if (msg.event === "system:member_left") {
+  console.warn("[SIGNAL] peer left");
+  lockRef.current = null;
+  peersInRoomRef.current.clear();
+  setStatus("matching");
+
+  const myId = peerRef.current?.id;
   if (myId && wsRef.current?.readyState === WebSocket.OPEN) {
     wsRef.current.send(JSON.stringify({ type: "presence", peerId: myId }));
   }
-    }
+}
   };
 
-  ws.onclose = () => {
-    stopProposal();
-    lockRef.current = null;
-    setStatus("matching");
-     const myId = peerRef.current?.id;
+ws.onclose = () => {
+  lockRef.current = null;
+  peersInRoomRef.current.clear();
+  setStatus("matching");
+
+  const myId = peerRef.current?.id;
   if (myId && wsRef.current?.readyState === WebSocket.OPEN) {
     wsRef.current.send(JSON.stringify({ type: "presence", peerId: myId }));
   }
-  };
 };
-  
+
   /* -------------------- PEER INIT -------------------- */
 useEffect(() => {
   let mounted = true;
@@ -313,18 +294,14 @@ peer.on("call", (incoming) => {
 });
 
     // ✅ MOVE THIS INSIDE init
-    peer.on("connection", (conn) => {
-      if (!lockRef.current || conn.peer !== lockRef.current) {
-        conn.close();
-        return;
-      }
+ peer.on("connection", (conn) => {
+  if (!lockRef.current || conn.peer !== lockRef.current) {
+    conn.close();
+    return;
+  }
 
-      if (!shouldInitiate(peer.id, conn.peer)) {
-        setupDataHandlers(conn);
-      } else {
-        conn.close();
-      }
-    });
+  setupDataHandlers(conn);
+});
   };
 
   init();
@@ -392,7 +369,6 @@ return {
   isVideoOff,
   toggleMute,
   toggleVideo,
-  skip,
   cleanup,
 };
 };
