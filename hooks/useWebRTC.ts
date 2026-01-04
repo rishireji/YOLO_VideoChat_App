@@ -154,15 +154,15 @@ export const useWebRTC = (
     [skip, onMessageReceived, onReactionReceived]
   );
 
- const revealIdentity = useCallback(() => {
+const revealIdentity = useCallback(() => {
   if (!connRef.current?.open || !session) return;
 
   connRef.current.send({
     type: 'identity',
     uid: session.id,
-    displayName: session.displayName ?? 'Anonymous',
   });
 }, [session]);
+
 
 
 
