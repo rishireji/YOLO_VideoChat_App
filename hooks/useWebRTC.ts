@@ -247,66 +247,68 @@ const connectPublicSignaling = (peerId: string) => {
     setStatus("matching");
   };
 };
+  
   /* -------------------- PEER INIT -------------------- */
-  useEffect(() => {
-    let mounted = true;
+useEffect(() => {
+  let mounted = true;
 
-    const init = async () => {
-      setStatus("generating_id");
-      const stream = await initMedia();
-      if (!mounted) return;
+  const init = async () => {
+    setStatus("generating_id");
+    const stream = await initMedia();
+    if (!mounted) return;
 
-      const peer = new Peer(crypto.randomUUID(), {
-        config: ICE_CONFIG,
-        secure: true,
-      });
+    const peer = new Peer(crypto.randomUUID(), {
+      config: ICE_CONFIG,
+      secure: true,
+    });
 
-      peerRef.current = peer;
+    peerRef.current = peer;
 
-      peer.on("open", (id) => {
-        if (mode === "public") connectPublicSignaling(id);
-      });
+    peer.on("open", (id) => {
+      if (mode === "public") connectPublicSignaling(id);
+    });
 
-peer.on("call", (incoming) => {
-  if (!lockRef.current || incoming.peer !== lockRef.current) {
-    incoming.close();
-    return;
-  }
+    // ✅ MOVE THIS INSIDE init
+    peer.on("call", (incoming) => {
+      if (!lockRef.current || incoming.peer !== lockRef.current) {
+        incoming.close();
+        return;
+      }
 
-  if (!localStream) {
-    incoming.close();
-    return;
-  }
+      if (!localStream) {
+        incoming.close();
+        return;
+      }
 
-  setStatus("connecting");
-  console.log("[WEBRTC] answering →", incoming.peer);
-  incoming.answer(localStream);
-  setupCallHandlers(incoming);
-});
+      setStatus("connecting");
+      incoming.answer(localStream);
+      setupCallHandlers(incoming);
+    });
 
- peer.on("connection", (conn) => {
-  if (!lockRef.current || conn.peer !== lockRef.current) {
-    conn.close();
-    return;
-  }
+    // ✅ MOVE THIS INSIDE init
+    peer.on("connection", (conn) => {
+      if (!lockRef.current || conn.peer !== lockRef.current) {
+        conn.close();
+        return;
+      }
 
-  if (!shouldInitiate(peer.id, conn.peer)) {
-    setupDataHandlers(conn);
-  } else {
-    conn.close();
-  }
-});
+      if (!shouldInitiate(peer.id, conn.peer)) {
+        setupDataHandlers(conn);
+      } else {
+        conn.close();
+      }
+    });
+  };
 
+  init();
 
-    init();
-    return () => {
-      mounted = false;
-      cleanup();
-      peerRef.current?.destroy();
-      localStream?.getTracks().forEach((t) => t.stop());
-    };
-  }, [region, mode]);
-
+  return () => {
+    mounted = false;
+    cleanup();
+    peerRef.current?.destroy();
+    localStream?.getTracks().forEach((t) => t.stop());
+  };
+}, [region, mode]);
   /* -------------------- PUBLIC API -------------------- */
   const sendMessage = (text: string) => {
     connRef.current?.open && connRef.current.send({ type: "chat", text });
