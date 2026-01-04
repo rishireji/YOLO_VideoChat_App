@@ -263,20 +263,31 @@ export const useWebRTC = (
       }
 
       // 3. ACCEPTANCE RECEIVED
-      if (msg.type === 'match-accept' && msg.targetId === myId) {
-        if (lockRef.current === msg.fromId) {
-          stopTimers();
-          
-          // TIE-BREAKER: Only the higher ID calls. 
-          // This prevents "Busy" errors from both sides calling at once.
-          if (myId > msg.fromId) {
-            initiateP2P(msg.fromId, stream);
-          } else {
-            console.log('Waiting for incoming call (I have lower ID)...');
-          }
-        }
-      }
+  // Inside connectSignaling -> ws.onmessage -> match-accept
 
+if (msg.type === 'match-accept' && msg.targetId === myId) {
+  if (lockRef.current === msg.fromId) {
+    stopTimers();
+    
+    // TIE-BREAKER LOGIC
+    if (myId > msg.fromId) {
+      // Case 1: I am the Caller (Higher ID) -> I start the call
+      console.log('I am the caller (Higher ID)');
+      initiateP2P(msg.fromId, stream);
+    } else {
+      // Case 2: I am the Callee (Lower ID) -> I wait for their call
+      console.log('Waiting for incoming call (I have lower ID)...');
+      
+      // --- THE FIX: ADD THIS TIMEOUT ---
+      // If the other person crashed and didn't call, don't wait forever.
+      connectionTimeoutRef.current = setTimeout(() => {
+        console.warn('Caller failed to start call (Timeout). Skipping...');
+        skip(true); // Dump them and find a new partner
+      }, 10000); // 10 seconds max wait
+      // -------------------------------
+    }
+  }
+}
       // 4. PEER LEFT
       if (msg.event === 'system:member_left' && lockRef.current === msg.peerId) {
         skip(false);
