@@ -267,7 +267,6 @@ export const useWebRTC = (
     },
     [region, broadcast, initiateP2P, skip, stopProposal]
   );
-
   /* -------------------- INIT -------------------- */
 
   useEffect(() => {
@@ -369,4 +368,5 @@ export const useWebRTC = (
       }
     }
   },
+};
 };
