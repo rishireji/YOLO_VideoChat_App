@@ -254,6 +254,7 @@ ws.onclose = () => {
     wsRef.current.send(JSON.stringify({ type: "presence", peerId: myId }));
   }
 };
+};
 
   /* -------------------- PEER INIT -------------------- */
 useEffect(() => {
