@@ -43,78 +43,79 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ onExit }) => {
     setTimeout(() => setActiveReactions(prev => prev.filter(r => r.id !== id)), 2500);
   }, []);
 
-const handleMessageReceived = useCallback(async (text: string) => {
-  // 🔥 HANDLE IDENTITY MESSAGE
-  try {
-    const parsed = JSON.parse(text);
-    if (parsed?.type === 'identity' && parsed?.uid) {
-      console.log('[YOLO] Remote Firebase UID received:', parsed.uid);
-      setRemoteUid(parsed.uid);
-      return;
+  const handleMessageReceived = useCallback(async (text: string) => {
+    // 🔥 HANDLE IDENTITY MESSAGE
+    try {
+      const parsed = JSON.parse(text);
+      if (parsed?.type === 'identity' && parsed?.uid) {
+        console.log('[YOLO] Remote Firebase UID received:', parsed.uid);
+        setRemoteUid(parsed.uid);
+        return;
+      }
+    } catch {
+      // not identity, continue as chat
     }
-  } catch {
-    // not identity, continue as chat
-  }
 
-  const messageId = Math.random().toString(36).substring(7);
-  const msg: ChatMessage = {
-    id: messageId,
-    senderId: 'stranger',
-    text,
-    timestamp: null,
-    isTranslating: true
-  };
+    const messageId = Math.random().toString(36).substring(7);
+    const msg: ChatMessage = {
+      id: messageId,
+      senderId: 'stranger',
+      text,
+      timestamp: null,
+      isTranslating: true
+    };
 
-  setMessages(prev => [...prev, msg]);
+    setMessages(prev => [...prev, msg]);
 
-  const targetLang = session?.preferredLanguage || 'English';
-  const translationResult = await translateText(text, targetLang);
+    const targetLang = session?.preferredLanguage || 'English';
+    const translationResult = await translateText(text, targetLang);
 
-  if (translationResult) {
-    setMessages(prev =>
-      prev.map(m =>
-        m.id === messageId
-          ? {
-              ...m,
-              translatedText: translationResult.translatedText,
-              detectedLanguage: translationResult.detectedLanguage,
-              isTranslating: false,
-              isOriginalShown:
-                translationResult.detectedLanguage.toLowerCase() ===
-                targetLang.toLowerCase()
-            }
-          : m
-      )
-    );
-  } else {
-    setMessages(prev =>
-      prev.map(m =>
-        m.id === messageId ? { ...m, isTranslating: false } : m
-      )
-    );
-  }
-}, [session?.preferredLanguage, translateText]);
+    if (translationResult) {
+      setMessages(prev =>
+        prev.map(m =>
+          m.id === messageId
+            ? {
+                ...m,
+                translatedText: translationResult.translatedText,
+                detectedLanguage: translationResult.detectedLanguage,
+                isTranslating: false,
+                isOriginalShown:
+                  translationResult.detectedLanguage.toLowerCase() ===
+                  targetLang.toLowerCase()
+              }
+            : m
+        )
+      );
+    } else {
+      setMessages(prev =>
+        prev.map(m =>
+          m.id === messageId ? { ...m, isTranslating: false } : m
+        )
+      );
+    }
+  }, [session?.preferredLanguage, translateText]);
+
+  // --- FIX APPLIED HERE: ARGS REORDERED ---
   const {
-  localStream,
-  remoteStream,
-  status,
-  sendMessage,
-  sendReaction,
-  skip,
-  isMuted,
-  isVideoOff,
-  toggleMute,
-  toggleVideo,
-  remotePeerId,
-  revealIdentity,
-} = useWebRTC(
-  session?.region || 'global', // region
-  "public",                   // MatchMode
-  undefined,                  // targetUid (public match)
-  handleMessageReceived,      // onMessage
-  handleReactionReceived      // onReaction
-);
-
+    localStream,
+    remoteStream,
+    status,
+    sendMessage,
+    sendReaction,
+    skip,
+    isMuted,
+    isVideoOff,
+    toggleMute,
+    toggleVideo,
+    remotePeerId,
+    revealIdentity,
+  } = useWebRTC(
+    session?.region || 'global',     // Arg 1: Region
+    handleReactionReceived,          // Arg 2: Reaction Callback (Corrected)
+    handleMessageReceived,           // Arg 3: Message Callback (Corrected)
+    session?.gender,                 // Arg 4: Gender Filter (Passed correctly)
+    session?.interests               // Arg 5: Interests Filter (Passed correctly)
+  );
 
   const friendStatus = useMemo(() => {
     if (!remoteUid) return 'none';
@@ -144,8 +145,8 @@ const handleMessageReceived = useCallback(async (text: string) => {
       case 'matching':
       case 'connecting':
       case 'generating_id':
-  setAppState(AppState.MATCHMAKING);
-  break;
+        setAppState(AppState.MATCHMAKING);
+        break;
       case 'connected':
         setAppState(AppState.CONNECTED);
         if (remotePeerId && hasDeductedRef.current !== remotePeerId) {
@@ -158,24 +159,22 @@ const handleMessageReceived = useCallback(async (text: string) => {
     }
   }, [status, remotePeerId, deductCoins, appState]);
 
-const handleSocialAction = async () => {
-  if (!user || !remoteUid) return;
+  const handleSocialAction = async () => {
+    if (!user || !remoteUid) return;
 
-  try {
-    if (friendStatus === 'none') {
-      // 🔑 reveal identity FIRST
-      revealIdentity();
-
-      // then persist request
-      await sendFriendRequest(remoteUid);
-    } else if (friendStatus === 'received') {
-      await acceptFriendRequest(remoteUid);
+    try {
+      if (friendStatus === 'none') {
+        // 🔑 reveal identity FIRST
+        revealIdentity();
+        // then persist request
+        await sendFriendRequest(remoteUid);
+      } else if (friendStatus === 'received') {
+        await acceptFriendRequest(remoteUid);
+      }
+    } catch (err) {
+      console.error("[YOLO Social] Social action failed:", err);
     }
-  } catch (err) {
-    console.error("[YOLO Social] Social action failed:", err);
-  }
-};
-
+  };
 
   return (
     <div className="flex flex-col lg:flex-row h-screen w-full bg-zinc-950 overflow-hidden relative font-inter pt-20">

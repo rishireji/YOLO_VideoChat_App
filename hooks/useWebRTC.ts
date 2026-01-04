@@ -3,8 +3,10 @@ import { Peer, DataConnection, MediaConnection } from 'peerjs';
 import { Region, ReactionType } from '../types';
 import { useSession } from '../context/SessionContext';
 
+// --- Types ---
 type WebRTCStatus = 'idle' | 'generating_id' | 'matching' | 'connecting' | 'connected' | 'disconnected' | 'error' | 'signaling_offline';
 
+// --- Constants ---
 const SIGNALING_API_KEY = 'PJ5tqEc0E390uQ7Tdot6trHD9XJ5tRclV7gnAV3r';
 const PIESOCKET_CLUSTER = 's15607.nyc1.piesocket.com';
 
@@ -32,24 +34,24 @@ const ICE_CONFIG = {
   iceCandidatePoolSize: 0,
 };
 
-// FIX 1: Updated signature to accept extra arguments (arg4, arg5) to satisfy TS2554
 export const useWebRTC = (
-  region: Region, 
-  onReactionReceived?: (type: ReactionType) => void,
-  onMessageReceived?: (text: string) => void,
-  _unusedArg4?: any, // Placeholder to prevent "Expected 3 but got 5" error
-  _unusedArg5?: any
+  region: Region,
+  onReactionReceived: (type: ReactionType) => void,
+  onMessageReceived: (text: string) => void,
+  gender?: string,       
+  interests?: string[]
 ) => {
   const { session } = useSession();
+  
+  // --- State ---
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
   const [status, setStatusState] = useState<WebRTCStatus>('idle');
   const [isMuted, setIsMuted] = useState(false);
   const [isVideoOff, setIsVideoOff] = useState(false);
-  
-  // FIX 2: Add remotePeerId state to satisfy TS2339
   const [remotePeerId, setRemotePeerId] = useState<string | null>(null);
 
+  // --- Refs ---
   const peerRef = useRef<Peer | null>(null);
   const callRef = useRef<MediaConnection | null>(null);
   const connRef = useRef<DataConnection | null>(null);
@@ -61,6 +63,7 @@ export const useWebRTC = (
   const lockRef = useRef<string | null>(null); 
   const isClosingRef = useRef(false);
 
+  // --- Helpers ---
   const updateStatus = useCallback((newStatus: WebRTCStatus) => {
     setStatusState(newStatus);
   }, []);
@@ -86,7 +89,7 @@ export const useWebRTC = (
   const cleanup = useCallback(() => {
     console.log("[YOLO] Cleanup: Releasing locks and closing connections.");
     lockRef.current = null;
-    setRemotePeerId(null); // Clear ID on cleanup
+    setRemotePeerId(null);
     stopProposal();
     if (callRef.current) { callRef.current.close(); callRef.current = null; }
     if (connRef.current) { connRef.current.close(); connRef.current = null; }
@@ -104,11 +107,20 @@ export const useWebRTC = (
     broadcast({ type: 'presence', peerId: peerRef.current?.id, status: 'matching' });
   }, [cleanup, updateStatus, broadcast]);
 
+  const revealIdentity = useCallback(() => {
+    if (connRef.current?.open) {
+      console.log("[YOLO] Revealing Identity...");
+      connRef.current.send({ type: 'reveal-identity', user: session?.user });
+    }
+  }, [session]);
+
+  // --- Handlers ---
   const setupCallHandlers = useCallback((call: MediaConnection) => {
     call.on('stream', (remote) => {
       console.log("[YOLO] WebRTC: Stream Established.");
       stopProposal(); 
       setRemoteStream(remote);
+      setRemotePeerId(call.peer);
       updateStatus('connected');
     });
     call.on('close', () => skip(false));
@@ -129,8 +141,8 @@ export const useWebRTC = (
   const initiateP2P = useCallback((remoteId: string, stream: MediaStream) => {
     console.log(`[YOLO] P2P: Initiating PeerJS Call to ${remoteId}`);
     updateStatus('connecting');
-    setRemotePeerId(remoteId); // Set the ID here
-
+    setRemotePeerId(remoteId);
+    
     setTimeout(() => {
       if (!peerRef.current || peerRef.current.destroyed) return;
       try {
@@ -145,6 +157,7 @@ export const useWebRTC = (
     }, 500);
   }, [setupCallHandlers, setupDataHandlers, skip, updateStatus]);
 
+  // --- Signaling Logic ---
   const connectSignaling = useCallback((myId: string, stream: MediaStream) => {
     if (isClosingRef.current) return;
 
@@ -157,17 +170,22 @@ export const useWebRTC = (
     ws.onopen = () => {
       console.log("[YOLO] Signaling: Online.");
       updateStatus('matching');
-      broadcast({ type: 'presence', peerId: myId, status: 'matching' });
+      // Pass the filters (gender/interests) into the broadcast
+      broadcast({ type: 'presence', peerId: myId, status: 'matching', gender, interests });
     };
 
     ws.onmessage = (e) => {
       try {
         const msg = JSON.parse(e.data);
         
+        // 1. Presence Received
         if (msg.type === 'presence' && msg.peerId !== myId) {
           if (!lockRef.current && !blacklistRef.current.has(msg.peerId)) {
+            // Optional: You can restore strict filtering logic here if needed
+            // if (gender && msg.gender !== gender) return; 
+
+            console.log(`[YOLO] Matcher: New peer ${msg.peerId} detected. Locking.`);
             lockRef.current = msg.peerId;
-            setRemotePeerId(msg.peerId); // Track potential partner
             
             const attemptProposal = () => {
               broadcast({ type: 'match-propose', targetId: msg.peerId, fromId: myId });
@@ -185,16 +203,19 @@ export const useWebRTC = (
           }
         }
 
+        // 2. Proposal Received
         if (msg.type === 'match-propose' && msg.targetId === myId) {
           if (!lockRef.current) {
             lockRef.current = msg.fromId;
-            setRemotePeerId(msg.fromId);
             stopProposal();
             updateStatus('connecting');
             broadcast({ type: 'match-accept', targetId: msg.fromId, fromId: myId });
-          } 
+          } else if (lockRef.current === msg.fromId) {
+             // already locked on this peer, ignore
+          }
         }
 
+        // 3. Acceptance Received
         if (msg.type === 'match-accept' && msg.targetId === myId) {
           if (lockRef.current === msg.fromId) {
             stopProposal();
@@ -203,10 +224,9 @@ export const useWebRTC = (
         }
 
         if (msg.event === 'system:member_left') {
-          if (lockRef.current) {
-            skip(false);
-          }
+          if (lockRef.current) skip(false);
         }
+
       } catch (err) {
         console.error("[YOLO] Signaling Message Error:", err);
       }
@@ -219,8 +239,9 @@ export const useWebRTC = (
     };
 
     ws.onerror = () => ws.close();
-  }, [region, broadcast, initiateP2P, skip, stopProposal, updateStatus]);
+  }, [region, gender, interests, broadcast, initiateP2P, skip, stopProposal, updateStatus]);
 
+  // --- Init Effect ---
   useEffect(() => {
     let mounted = true;
     const init = async () => {
@@ -248,6 +269,7 @@ export const useWebRTC = (
           if (lockRef.current && incoming.peer === lockRef.current) {
             stopProposal(); 
             updateStatus('connecting');
+            setRemotePeerId(incoming.peer);
             incoming.answer(stream);
             setupCallHandlers(incoming);
           } else {
@@ -283,13 +305,13 @@ export const useWebRTC = (
     };
   }, [session?.id, cleanup, connectSignaling, setupCallHandlers, setupDataHandlers, skip, stopProposal, updateStatus]);
 
+  // --- Return Object ---
   return {
     localStream, 
     remoteStream, 
-    status, 
-    // FIX 3: Added missing properties
-    remotePeerId, 
-    revealIdentity: () => console.log("[YOLO] Reveal Identity requested"), // Stub function
+    status,
+    remotePeerId,    
+    revealIdentity,  
     sendMessage: (text: string) => { if (connRef.current?.open) connRef.current.send({ type: 'chat', text }); },
     sendReaction: (value: ReactionType) => { if (connRef.current?.open) connRef.current.send({ type: 'reaction', value }); },
     skip: () => skip(false), 
