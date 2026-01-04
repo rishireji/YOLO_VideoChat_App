@@ -42,6 +42,9 @@ const ICE_CONFIG = {
 };
 
 const shouldInitiate = (myId: string, remoteId: string) => myId < remoteId;
+const shouldPropose = (myId: string, remoteId: string) => {
+  return myId < remoteId;
+};
 
 export const useWebRTC = (
   region: Region,
@@ -174,30 +177,37 @@ const connectPublicSignaling = (peerId: string) => {
     const msg = JSON.parse(e.data);
 
     // 1️⃣ Someone is available
-    if (msg.type === "presence" && msg.peerId !== peerId) {
-      if (!lockRef.current) {
-        lockRef.current = msg.peerId;
+if (msg.type === "presence" && msg.peerId !== peerId) {
+  if (lockRef.current) return;
 
-        const propose = () => {
-          console.log("[SIGNAL] propose →", msg.peerId);
-          ws.send(
-            JSON.stringify({
-              type: "match-propose",
-              targetId: msg.peerId,
-              fromId: peerId,
-            })
-          );
-        };
+  // 🔒 deterministic proposer
+  if (!shouldPropose(peerId, msg.peerId)) {
+    // I am NOT the proposer → wait
+    return;
+  }
 
-        propose();
-        proposalIntervalRef.current = window.setInterval(propose, 1500);
+  lockRef.current = msg.peerId;
 
-        handshakeTimeoutRef.current = window.setTimeout(() => {
-          stopProposal();
-          lockRef.current = null;
-          setStatus("matching");
-        }, 7000);
-      }
+  const propose = () => {
+    console.log("[SIGNAL] propose →", msg.peerId);
+    ws.send(
+      JSON.stringify({
+        type: "match-propose",
+        targetId: msg.peerId,
+        fromId: peerId,
+      })
+    );
+  };
+
+  propose();
+  proposalIntervalRef.current = window.setInterval(propose, 1500);
+
+  handshakeTimeoutRef.current = window.setTimeout(() => {
+    stopProposal();
+    lockRef.current = null;
+    setStatus("matching");
+  }, 7000);
+}
     }
 
     // 2️⃣ Someone proposes to us
