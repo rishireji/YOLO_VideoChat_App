@@ -208,7 +208,6 @@ if (msg.type === "presence" && msg.peerId !== peerId) {
     setStatus("matching");
   }, 7000);
 }
-    }
 
     // 2️⃣ Someone proposes to us
     if (msg.type === "match-propose" && msg.targetId === peerId) {
