@@ -43,8 +43,10 @@ const BLACKLIST_TTL = 60_000; // 1 minute
 
 export const useWebRTC = (
   region: Region,
-  onReactionReceived?: (type: ReactionType) => void,
-  onMessageReceived?: (text: string) => void
+  mode: 'public' | 'private' = 'public',
+  targetUid?: string,
+  onMessageReceived?: (msg: string) => void,
+  onReactionReceived?: (type: ReactionType) => void
 ) => {
   const { session } = useSession();
 
@@ -58,6 +60,8 @@ export const useWebRTC = (
   const callRef = useRef<MediaConnection | null>(null);
   const connRef = useRef<DataConnection | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
+  const remotePeerIdRef = useRef<string | null>(null);
+
 
   const lockRef = useRef<string | null>(null);
   const blacklistRef = useRef<Set<string>>(new Set());
@@ -121,6 +125,7 @@ export const useWebRTC = (
   const setupCallHandlers = useCallback(
     (call: MediaConnection) => {
       call.on('stream', (remote) => {
+        remotePeerIdRef.current = call.peer;
         stopProposal();
         setRemoteStream(remote);
         setStatus('connected');
@@ -148,6 +153,17 @@ export const useWebRTC = (
     },
     [skip, onMessageReceived, onReactionReceived]
   );
+
+  const revealIdentity = useCallback(() => {
+  if (!connRef.current?.open || !session?.user) return;
+
+  connRef.current.send({
+    type: 'identity',
+    uid: session.user.uid,
+    displayName: session.user.displayName,
+  });
+}, [session]);
+
 
   const initiateP2P = useCallback(
     (remoteId: string, stream: MediaStream) => {
@@ -311,34 +327,46 @@ export const useWebRTC = (
   /* -------------------- API -------------------- */
 
   return {
-    localStream,
-    remoteStream,
-    status,
-    skip: () => skip(false),
-    sendMessage: (text: string) =>
-      connRef.current?.open && connRef.current.send({ type: 'chat', text }),
-    sendReaction: (value: ReactionType) =>
-      connRef.current?.open &&
-      connRef.current.send({ type: 'reaction', value }),
-    isMuted,
-    isVideoOff,
-    toggleMute: () => {
-      if (localStream) {
-        const t = localStream.getAudioTracks()[0];
-        if (t) {
-          t.enabled = isMuted;
-          setIsMuted(!isMuted);
-        }
+  // streams
+  localStream,
+  remoteStream,
+  remotePeerId: remotePeerIdRef.current,
+
+  // state
+  status,
+
+  // messaging
+  sendMessage: (text: string) =>
+    connRef.current?.open &&
+    connRef.current.send({ type: 'chat', text }),
+
+  sendReaction: (value: ReactionType) =>
+    connRef.current?.open &&
+    connRef.current.send({ type: 'reaction', value }),
+
+  // identity
+  revealIdentity,
+
+  // controls
+  skip: () => skip(false),
+  isMuted,
+  isVideoOff,
+  toggleMute: () => {
+    if (localStream) {
+      const t = localStream.getAudioTracks()[0];
+      if (t) {
+        t.enabled = isMuted;
+        setIsMuted(!isMuted);
       }
-    },
-    toggleVideo: () => {
-      if (localStream) {
-        const t = localStream.getVideoTracks()[0];
-        if (t) {
-          t.enabled = isVideoOff;
-          setIsVideoOff(!isVideoOff);
-        }
+    }
+  },
+  toggleVideo: () => {
+    if (localStream) {
+      const t = localStream.getVideoTracks()[0];
+      if (t) {
+        t.enabled = isVideoOff;
+        setIsVideoOff(!isVideoOff);
       }
-    },
-  };
+    }
+  },
 };
