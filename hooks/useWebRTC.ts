@@ -1,4 +1,3 @@
-￼
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { Peer, DataConnection, MediaConnection } from 'peerjs';
 import { Region, ReactionType } from '../types';
@@ -30,7 +29,7 @@ const ICE_CONFIG = {
       credential: 'openrelayproject'
     }
   ],
-  iceCandidatePoolSize: 10,
+  iceCandidatePoolSize: 0,
 };
 
 export const useWebRTC = (
@@ -158,14 +157,13 @@ export const useWebRTC = (
       try {
         const msg = JSON.parse(e.data);
         
-        // 1. Presence Received: If we are free, try to propose to the new peer
+        // 1. Presence Received
         if (msg.type === 'presence' && msg.peerId !== myId) {
           if (!lockRef.current && !blacklistRef.current.has(msg.peerId)) {
             console.log(`[YOLO] Matcher: New peer ${msg.peerId} detected. Locking and Proposing.`);
             lockRef.current = msg.peerId;
             
             const attemptProposal = () => {
-              // Only keep proposing if we haven't successfully connected yet
               console.log(`[YOLO] Propose -> ${msg.peerId}`);
               broadcast({ type: 'match-propose', targetId: msg.peerId, fromId: myId });
             };
@@ -174,7 +172,6 @@ export const useWebRTC = (
             attemptProposal();
             proposalIntervalRef.current = setInterval(attemptProposal, 1500);
 
-            // Timeout if they never accept
             handshakeTimeoutRef.current = setTimeout(() => {
               if (lockRef.current === msg.peerId) {
                 console.warn("[YOLO] Matcher: Proposal Timeout. Skipping ghost.");
@@ -184,23 +181,19 @@ export const useWebRTC = (
           }
         }
 
-        // 2. Proposal Received: If we are targeted and free, accept immediately
+        // 2. Proposal Received
         if (msg.type === 'match-propose' && msg.targetId === myId) {
-  // If we are free → accept
-  if (!lockRef.current) {
-    lockRef.current = msg.fromId;
-    stopProposal();
-    updateStatus('connecting');
-    broadcast({ type: 'match-accept', targetId: msg.fromId, fromId: myId });
-  }
+          if (!lockRef.current) {
+            lockRef.current = msg.fromId;
+            stopProposal();
+            updateStatus('connecting');
+            broadcast({ type: 'match-accept', targetId: msg.fromId, fromId: myId });
+          } else if (lockRef.current === msg.fromId) {
+             // already locked on this peer, ignore
+          }
+        }
 
-  // GLARE RESOLUTION: if both proposed, accept the lexicographically smaller ID
-  else if (lockRef.current === msg.fromId) {
-    // already locked on this peer, ignore
-  }
-}
-
-        // 3. Acceptance Received: If it matches our lock, stop proposals and start WebRTC
+        // 3. Acceptance Received
         if (msg.type === 'match-accept' && msg.targetId === myId) {
           if (lockRef.current === msg.fromId) {
             console.log(`[YOLO] Matcher: Acceptance from ${msg.fromId} received. Initiating P2P.`);
@@ -210,17 +203,13 @@ export const useWebRTC = (
         }
 
         // Handle native leave events
-       // Handle native leave events (PieSocket system events)
-if (msg.event === 'system:member_left') {
-  console.log('[YOLO] system:member_left received');
-
-  // If we were matched or attempting to match, reset safely
-  if (lockRef.current) {
-    console.log('[YOLO] Active partner left. Cleaning up.');
-    skip(false);
-  }
-}
-
+        if (msg.event === 'system:member_left') {
+          console.log('[YOLO] system:member_left received');
+          if (lockRef.current) {
+            console.log('[YOLO] Active partner left. Cleaning up.');
+            skip(false);
+          }
+        }
 
       } catch (err) {
         console.error("[YOLO] Signaling Message Error:", err);
@@ -260,7 +249,6 @@ if (msg.event === 'system:member_left') {
         });
 
         peer.on('call', (incoming) => {
-          // If we are locked on this sender (we sent an acceptance or we are in a glare state)
           if (lockRef.current && incoming.peer === lockRef.current) {
             console.log("[YOLO] WebRTC: Answering incoming PeerJS call.");
             stopProposal(); 
