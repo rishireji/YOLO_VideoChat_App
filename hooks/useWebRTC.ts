@@ -180,10 +180,9 @@ const connectPublicSignaling = (peerId: string) => {
 if (msg.type === "presence" && msg.peerId !== peerId) {
   if (lockRef.current) return;
 
-  // 🔒 deterministic proposer
+  // 🔒 deterministic proposer (THIS WAS MISSING)
   if (!shouldPropose(peerId, msg.peerId)) {
-    // I am NOT the proposer → wait
-    return;
+    return; // wait for the other peer to propose
   }
 
   lockRef.current = msg.peerId;
@@ -206,9 +205,14 @@ if (msg.type === "presence" && msg.peerId !== peerId) {
     stopProposal();
     lockRef.current = null;
     setStatus("matching");
+
+    // 🔁 re-announce presence
+    const myId = peerRef.current?.id;
+    if (myId && wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: "presence", peerId: myId }));
+    }
   }, 7000);
 }
-
     // 2️⃣ Someone proposes to us
     if (msg.type === "match-propose" && msg.targetId === peerId) {
       if (!lockRef.current) {
@@ -247,6 +251,10 @@ if (msg.type === "presence" && msg.peerId !== peerId) {
       stopProposal();
       lockRef.current = null;
       setStatus("matching");
+       const myId = peerRef.current?.id;
+  if (myId && wsRef.current?.readyState === WebSocket.OPEN) {
+    wsRef.current.send(JSON.stringify({ type: "presence", peerId: myId }));
+  }
     }
   };
 
@@ -254,6 +262,10 @@ if (msg.type === "presence" && msg.peerId !== peerId) {
     stopProposal();
     lockRef.current = null;
     setStatus("matching");
+     const myId = peerRef.current?.id;
+  if (myId && wsRef.current?.readyState === WebSocket.OPEN) {
+    wsRef.current.send(JSON.stringify({ type: "presence", peerId: myId }));
+  }
   };
 };
   
