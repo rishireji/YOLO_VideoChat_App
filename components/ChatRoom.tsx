@@ -44,16 +44,16 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ onExit }) => {
   }, []);
 
   const handleMessageReceived = useCallback(async (text: string) => {
-    // 🔥 HANDLE IDENTITY MESSAGE
+    // 🔥 HANDLE IDENTITY MESSAGE (EXCHANGED VIA DATA CHANNEL)
     try {
       const parsed = JSON.parse(text);
       if (parsed?.type === 'identity' && parsed?.uid) {
-        console.log('[YOLO] Remote Firebase UID received:', parsed.uid);
+        console.log('[YOLO] Remote Identity handshake received:', parsed.uid);
         setRemoteUid(parsed.uid);
         return;
       }
     } catch {
-      // not identity, continue as chat
+      // Not a technical message, continue as normal chat
     }
 
     const messageId = Math.random().toString(36).substring(7);
@@ -95,7 +95,6 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ onExit }) => {
     }
   }, [session?.preferredLanguage, translateText]);
 
-  // --- FIX APPLIED HERE: FORCE TYPE CASTING ---
   const {
     localStream,
     remoteStream,
@@ -113,8 +112,8 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ onExit }) => {
     session?.region || 'global',     
     handleReactionReceived,          
     handleMessageReceived,           
-    (session as any)?.gender,        // Force TS to ignore "Property does not exist"
-    (session as any)?.interests      // Force TS to ignore "Property does not exist"
+    (session as any)?.gender,        
+    (session as any)?.interests      
   );
 
   const friendStatus = useMemo(() => {
@@ -126,6 +125,16 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ onExit }) => {
   }, [remoteUid, friendProfiles, sentRequests, receivedRequests]);
 
   useModeration(localStream);
+
+  // Identity broadcast logic: Automatic exchange when both are signed in
+  useEffect(() => {
+    if (appState === AppState.CONNECTED && user && status === 'connected') {
+      const identityMsg = JSON.stringify({ type: 'identity', uid: user.uid });
+      // We send it multiple times with a small delay to ensure data channel availability
+      const timer = setTimeout(() => sendMessage(identityMsg), 1000);
+      return () => clearTimeout(timer);
+    }
+  }, [appState, user, status, sendMessage]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -161,18 +170,15 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ onExit }) => {
 
   const handleSocialAction = async () => {
     if (!user || !remoteUid) return;
-
     try {
       if (friendStatus === 'none') {
-        // 🔑 reveal identity FIRST
         revealIdentity();
-        // then persist request
         await sendFriendRequest(remoteUid);
       } else if (friendStatus === 'received') {
         await acceptFriendRequest(remoteUid);
       }
     } catch (err) {
-      console.error("[YOLO Social] Social action failed:", err);
+      console.error("[YOLO Social] Handshake action failed:", err);
     }
   };
 
@@ -204,37 +210,22 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ onExit }) => {
             </div>
           </div>
 
-          {appState === AppState.CONNECTED && user && remoteUid && (
-            <div className="absolute top-6 right-24 z-40 animate-in fade-in slide-in-from-right-2 duration-500">
-               {friendStatus === 'none' && (
-                 <button onClick={handleSocialAction} className="bg-white text-black px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-zinc-200 transition-all active:scale-95 shadow-2xl">
-                    Request Friend
-                 </button>
-               )}
-               {friendStatus === 'sent' && (
-                 <div className="bg-zinc-900 border border-zinc-800 px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest text-zinc-500">
-                    Request Pending
-                 </div>
-               )}
-               {friendStatus === 'received' && (
-                 <button onClick={handleSocialAction} className="bg-green-600 text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-green-500 transition-all active:scale-95 shadow-2xl animate-pulse">
-                    Accept Handshake
-                 </button>
-               )}
-               {friendStatus === 'accepted' && (
-                 <div className="bg-indigo-600 text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest shadow-2xl">
-                    Trusted Node
-                 </div>
-               )}
-            </div>
-          )}
-
           <div className={`absolute bottom-8 left-1/2 -translate-x-1/2 z-50 transition-all duration-500 ${isUserActive || appState === AppState.MATCHMAKING ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4 pointer-events-none'}`}>
             <Controls appState={appState} onNext={skip} onExit={onExit} isMuted={isMuted} isVideoOff={isVideoOff} onToggleMute={toggleMute} onToggleVideo={toggleVideo} onReport={() => setIsReportModalOpen(true)} onSendReaction={(type) => { if (appState === AppState.CONNECTED) { sendReaction(type); handleReactionReceived(type); } }} />
           </div>
         </div>
       </div>
-      <Sidebar messages={messages} onSendMessage={(text) => { const msg: ChatMessage = { id: Date.now().toString(), senderId: 'me', text, timestamp: null }; setMessages(prev => [...prev, msg]); sendMessage(text); }} onToggleTranslation={(id) => setMessages(prev => prev.map(m => m.id === id ? { ...m, isOriginalShown: !m.isOriginalShown } : m))} isConnected={appState === AppState.CONNECTED} region={session?.region || 'global'} />
+      <Sidebar 
+        messages={messages} 
+        onSendMessage={(text) => { const msg: ChatMessage = { id: Date.now().toString(), senderId: 'me', text, timestamp: null }; setMessages(prev => [...prev, msg]); sendMessage(text); }} 
+        onToggleTranslation={(id) => setMessages(prev => prev.map(m => m.id === id ? { ...m, isOriginalShown: !m.isOriginalShown } : m))} 
+        isConnected={appState === AppState.CONNECTED} 
+        region={session?.region || 'global'}
+        user={user}
+        remoteUid={remoteUid}
+        friendStatus={friendStatus as any}
+        onSocialAction={handleSocialAction}
+      />
     </div>
   );
 };

@@ -3,24 +3,27 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     
-    // Profiles: Read access restricted to owner or friends only.
+    // Profiles: Access restricted to owner OR reciprocal friends.
     match /Users/{userId} {
+      // Allow reading a profile if the user is the owner OR if the current user exists in the target's friend list.
       allow read: if request.auth != null && (
         request.auth.uid == userId || 
         exists(/databases/$(database)/documents/Users/$(userId)/friends/$(request.auth.uid))
       );
+      
+      // Only the owner can modify their own base profile.
       allow write: if request.auth != null && request.auth.uid == userId;
       
-      // Handshake: sentRequests
+      // Handshake: sentRequests - Strictly private to sender
       match /sentRequests/{requestId} {
         allow read, write: if request.auth != null && request.auth.uid == userId;
       }
       
-      // Handshake: receivedRequests
+      // Handshake: receivedRequests - Recipient reads, Sender writes
       match /receivedRequests/{requestId} {
-        // Owner can read their incoming requests
+        // Recipient can see who requested them
         allow read, delete: if request.auth != null && request.auth.uid == userId;
-        // Foreign user can create a request doc to introduce themselves
+        // Authenticated users can create a request in another's mailbox, provided ID matches their own
         allow create: if request.auth != null && request.auth.uid == requestId;
       }
 
@@ -32,12 +35,13 @@ service cloud.firestore {
       // Friends: Reciprocal access for handshake completion.
       match /friends/{friendId} {
         allow read: if request.auth != null && (request.auth.uid == userId || request.auth.uid == friendId);
-        // Both parties involved can create the friendship link during batch accept
+        // Both parties involved can create the friendship link during batch accept logic
         allow write: if request.auth != null && (request.auth.uid == userId || request.auth.uid == friendId);
+        allow delete: if request.auth != null && (request.auth.uid == userId || request.auth.uid == friendId);
       }
     }
     
-    // Deny all other access paths by default.
+    // Default Deny
     match /{document=**} {
       allow read, write: if false;
     }

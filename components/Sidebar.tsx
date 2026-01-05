@@ -9,9 +9,23 @@ interface SidebarProps {
   onToggleTranslation: (messageId: string) => void;
   isConnected: boolean;
   region: Region;
+  user?: any;
+  remoteUid?: string | null;
+  friendStatus?: 'none' | 'sent' | 'received' | 'accepted';
+  onSocialAction?: () => void;
 }
 
-export const Sidebar: React.FC<SidebarProps> = ({ messages, onSendMessage, onToggleTranslation, isConnected, region }) => {
+export const Sidebar: React.FC<SidebarProps> = ({ 
+  messages, 
+  onSendMessage, 
+  onToggleTranslation, 
+  isConnected, 
+  region,
+  user,
+  remoteUid,
+  friendStatus = 'none',
+  onSocialAction
+}) => {
   const { session } = useSession();
   const [inputText, setInputText] = useState('');
   const [isStrangerTyping, setIsStrangerTyping] = useState(false);
@@ -129,21 +143,12 @@ export const Sidebar: React.FC<SidebarProps> = ({ messages, onSendMessage, onTog
                         </>
                       )}
                     </div>
-<div
-  className={`flex items-center gap-2 mt-1.5 ${
-    msg.senderId === 'me' ? 'flex-row-reverse' : 'flex-row'
-  }`}
->
-  <span className="text-[8px] lg:text-[9px] text-zinc-600 font-bold uppercase tracking-widest opacity-80">
-    {msg.senderId === 'me' ? 'You' : 'Stranger'} •{' '}
-    {msg.timestamp
-      ? msg.timestamp.toDate().toLocaleTimeString([], {
-          hour: '2-digit',
-          minute: '2-digit',
-        })
-      : ''}
-  </span>
-</div>
+                    <div className={`flex items-center gap-2 mt-1.5 ${msg.senderId === 'me' ? 'flex-row-reverse' : 'flex-row'}`}>
+                      <span className="text-[8px] lg:text-[9px] text-zinc-600 font-bold uppercase tracking-widest opacity-80">
+                        {msg.senderId === 'me' ? 'You' : 'Stranger'} •{' '}
+                        {msg.timestamp ? msg.timestamp.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
+                      </span>
+                    </div>
                   </>
                 )}
               </div>
@@ -161,8 +166,36 @@ export const Sidebar: React.FC<SidebarProps> = ({ messages, onSendMessage, onTog
         )}
       </div>
 
-      <form onSubmit={handleSubmit} className="p-4 lg:p-6 bg-zinc-950 border-t border-zinc-800/50 pb-8 lg:pb-6 relative z-10">
-        <div className="relative group">
+      <div className="p-4 lg:p-6 bg-zinc-950 border-t border-zinc-800/50 pb-8 lg:pb-6 relative z-10 flex flex-col gap-3">
+        {/* Friend Request UI - Native to chat window */}
+        {isConnected && user && remoteUid && friendStatus !== 'accepted' && (
+          <div className="flex animate-in slide-in-from-bottom-2 duration-300">
+            {friendStatus === 'none' && (
+              <button 
+                onClick={onSocialAction}
+                className="w-full flex items-center justify-center gap-2 py-3 bg-white text-black text-[10px] font-black uppercase tracking-[0.2em] rounded-xl hover:bg-zinc-200 transition-all shadow-xl active:scale-95"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M12 4v16m8-8H4"/></svg>
+                Send Friend Request
+              </button>
+            )}
+            {friendStatus === 'sent' && (
+              <div className="w-full py-3 bg-zinc-900 border border-zinc-800 text-zinc-500 text-[10px] font-black uppercase tracking-[0.2em] rounded-xl text-center">
+                Handshake Dispatched
+              </div>
+            )}
+            {friendStatus === 'received' && (
+              <button 
+                onClick={onSocialAction}
+                className="w-full py-3 bg-red-600 text-white text-[10px] font-black uppercase tracking-[0.2em] rounded-xl hover:bg-red-500 transition-all shadow-xl animate-pulse active:scale-95"
+              >
+                Accept Friend Handshake
+              </button>
+            )}
+          </div>
+        )}
+
+        <form onSubmit={handleSubmit} className="relative group">
           <input
             type="text"
             value={inputText}
@@ -182,8 +215,8 @@ export const Sidebar: React.FC<SidebarProps> = ({ messages, onSendMessage, onTog
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/>
             </svg>
           </button>
-        </div>
-      </form>
+        </form>
+      </div>
     </div>
   );
 };

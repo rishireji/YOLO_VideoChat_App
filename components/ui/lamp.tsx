@@ -21,10 +21,9 @@ export function LampContainer({
     >
       {/* 
         Lamp Beams Container: 
-        Adjusted scaling and opacity to create a more atmospheric "studio" beam effect.
-        Updated colors to Cool Indigo and Muted Teal.
+        Reduced vertical padding to shift the glow focal point higher.
       */}
-      <div className="relative flex w-full flex-1 scale-y-110 items-center justify-center isolate z-0 pt-40">
+      <div className="relative flex w-full flex-1 scale-y-105 items-center justify-center isolate z-0 pt-16 md:pt-24">
         <motion.div
           initial={{ opacity: 0.1, width: "15rem" }}
           whileInView={{ opacity: 0.3, width: "35rem" }}
@@ -32,7 +31,7 @@ export function LampContainer({
           style={{
             backgroundImage: `conic-gradient(var(--conic-position), var(--tw-gradient-stops))`,
           }}
-          className="absolute right-1/2 h-64 w-[35rem] bg-gradient-conic from-indigo-600/20 via-transparent to-transparent [--conic-position:from_70deg_at_center_top]"
+          className="absolute right-1/2 h-48 md:h-64 w-[35rem] bg-gradient-conic from-indigo-600/20 via-transparent to-transparent [--conic-position:from_70deg_at_center_top]"
         />
         <motion.div
           initial={{ opacity: 0.1, width: "15rem" }}
@@ -41,7 +40,7 @@ export function LampContainer({
           style={{
             backgroundImage: `conic-gradient(var(--conic-position), var(--tw-gradient-stops))`,
           }}
-          className="absolute left-1/2 h-64 w-[35rem] bg-gradient-conic from-transparent via-transparent to-indigo-600/20 [--conic-position:from_290deg_at_center_top]"
+          className="absolute left-1/2 h-48 md:h-64 w-[35rem] bg-gradient-conic from-transparent via-transparent to-indigo-600/20 [--conic-position:from_290deg_at_center_top]"
         />
         
         {/* Visual Softening Layers */}
@@ -70,9 +69,9 @@ export function LampContainer({
 
       {/* 
         Child Content Wrapper: 
-        Positioned to frame the YOLO logo perfectly for visual hierarchy.
+        Reduced top padding significantly to remove excessive whitespace above the heading.
       */}
-      <div className="relative z-50 flex flex-col items-center justify-center px-5 pt-8 w-full">
+      <div className="relative z-50 flex flex-col items-center justify-center px-6 pt-4 md:pt-6 pb-12 w-full">
         {children}
       </div>
     </WavyBackground>
