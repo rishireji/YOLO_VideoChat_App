@@ -210,7 +210,7 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ onExit }) => {
             </div>
           </div>
 
-          <div className={`absolute bottom-8 left-1/2 -translate-x-1/2 z-50 transition-all duration-500 ${isUserActive || appState === AppState.MATCHMAKING ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4 pointer-events-none'}`}>
+          <div className={`absolute bottom-5 left-1/2 -translate-x-1/2 z-50 transition-all duration-500 ${isUserActive || appState === AppState.MATCHMAKING ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4 pointer-events-none'}`}>
             <Controls appState={appState} onNext={skip} onExit={onExit} isMuted={isMuted} isVideoOff={isVideoOff} onToggleMute={toggleMute} onToggleVideo={toggleVideo} onReport={() => setIsReportModalOpen(true)} onSendReaction={(type) => { if (appState === AppState.CONNECTED) { sendReaction(type); handleReactionReceived(type); } }} />
           </div>
         </div>

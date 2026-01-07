@@ -1,14 +1,16 @@
+
 "use client";
 import React from "react";
 import { motion } from "framer-motion";
 import { cn } from "../../lib/utils";
 import { WavyBackground } from "./wavy-background";
 
+// Fixed: Make children prop optional to resolve TS error: Property 'children' is missing in type '{ className: string; }'
 export function LampContainer({
   children,
   className,
 }: {
-  children: React.ReactNode;
+  children?: React.ReactNode;
   className?: string;
 }) {
   return (
