@@ -110,8 +110,8 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onStart }) => {
 
   return (
     <div className="relative w-full bg-[#0a0a0c]">
-      <section className="relative min-h-screen">
-        <LampContainer className="min-h-screen">
+      <section className="relative min-h-screen pt-24 md:pt-32">
+        <LampContainer>
           <motion.div
             initial={{ opacity: 0, y: 30 }}
             whileInView={{ opacity: 1, y: 0 }}
@@ -120,20 +120,20 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onStart }) => {
               duration: 0.8,
               ease: "easeInOut",
             }}
-            className="flex flex-col items-center text-center max-w-5xl pt-8 md:pt-10 pb-12"
+            className="flex flex-col items-center text-center max-w-5xl"
           >
-            <div className="inline-block px-4 py-1.5 mb-10 rounded-full border border-red-500/20 bg-red-500/5 text-red-500/80 text-[10px] font-black uppercase tracking-[0.4em] shadow-[0_0_20px_rgba(239,68,68,0.1)]">
-              System Online: Matchmaking Engine Active
+            <div className="inline-block px-4 py-1.5 mb-8 rounded-full border border-red-500/20 bg-red-500/5 text-red-500/80 text-[10px] font-black uppercase tracking-[0.4em] shadow-[0_0_20px_rgba(239,68,68,0.1)]">
+              Matchmaking Engine Active
             </div>
             
-            <Brand size="lg" className="mb-8 glitch-text" />
+            <Brand size="lg" className="mb-8 glitch-text md:scale-110" />
             
-            <p className="text-2xl md:text-5xl font-black text-white/95 mb-14 max-w-4xl mx-auto leading-tight tracking-tighter px-6 drop-shadow-2xl">
+            <p className="text-2xl md:text-5xl font-black text-white/95 mb-12 max-w-4xl mx-auto leading-tight tracking-tighter px-6 drop-shadow-2xl">
               Global anonymous matchmaking. <br className="hidden md:block"/>
-              <span className="text-zinc-500 italic font-medium text-xl md:text-3xl mt-4 block opacity-80">Witness the world, then vanish.</span>
+              <span className="text-zinc-500 italic font-medium text-xl md:text-3xl mt-4 block opacity-100">Witness the world, then vanish.</span>
             </p>
 
-            <div className="w-full max-w-[420px] mx-auto bg-black/60 backdrop-blur-3xl border border-white/10 p-9 md:p-11 rounded-[56px] shadow-[0_60px_120px_rgba(0,0,0,0.95)] space-y-8 relative z-[60]">
+            <div className="w-full max-w-[420px] mx-auto bg-black/80 backdrop-blur-3xl border border-white/10 p-9 md:p-11 rounded-[56px] shadow-[0_60px_120px_rgba(0,0,0,0.95)] space-y-8 relative z-[60]">
               <div className="space-y-3 text-left">
                 <label className="text-[11px] font-black text-zinc-500 uppercase tracking-[0.25em] ml-1">Relay Node</label>
                 <div className="relative group">
@@ -177,18 +177,6 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onStart }) => {
                     <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent -translate-x-full group-hover/btn:translate-x-full transition-transform duration-1000" />
                   )}
                 </button>
-              </div>
-              
-              <div className="flex items-center justify-center gap-5 text-[10px] text-zinc-600 uppercase font-black tracking-[0.3em] pt-2">
-                <div className="flex items-center gap-2">
-                  <div className="w-1.5 h-1.5 rounded-full bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.4)]"></div>
-                  Encrypted
-                </div>
-                <div className="w-1 h-1 rounded-full bg-zinc-800"></div>
-                <div className="flex items-center gap-2">
-                  <div className="w-1.5 h-1.5 rounded-full bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.4)]"></div>
-                  AI Moderated
-                </div>
               </div>
             </div>
           </motion.div>
@@ -234,17 +222,6 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onStart }) => {
             {faqs.map((faq, index) => (
               <FAQItem key={index} question={faq.question} answer={faq.answer} />
             ))}
-          </div>
-
-          <div className="mt-24 text-center relative z-10">
-            <p className="text-zinc-700 text-[10px] font-black uppercase tracking-[0.5em] mb-14">
-              AI Compliance Monitoring Enabled • E2EE Peer-to-Peer
-            </p>
-            <div className="flex items-center justify-center gap-16 opacity-30 grayscale hover:opacity-50 transition-opacity">
-              <span className="text-[11px] font-black tracking-[0.4em] uppercase">No Storage</span>
-              <span className="text-[11px] font-black tracking-[0.4em] uppercase">No Profile</span>
-              <span className="text-[11px] font-black tracking-[0.4em] uppercase">18+ Restricted</span>
-            </div>
           </div>
         </section>
       </div>

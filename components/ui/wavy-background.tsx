@@ -12,7 +12,7 @@ export const WavyBackground = ({
   backgroundFill,
   blur = 10,
   speed = "fast",
-  waveOpacity = 0.5,
+  waveOpacity = 0.8,
   ...props
 }: {
   children?: any;
@@ -38,11 +38,11 @@ export const WavyBackground = ({
   const getSpeed = () => {
     switch (speed) {
       case "slow":
-        return 0.001;
+        return 0.0012;
       case "fast":
-        return 0.002;
+        return 0.0025;
       default:
-        return 0.001;
+        return 0.0015;
     }
   };
 
@@ -55,29 +55,32 @@ export const WavyBackground = ({
     ctx.filter = `blur(${blur}px)`;
     nt = 0;
     window.onresize = function () {
-      w = ctx.canvas.width = window.innerWidth;
-      h = ctx.canvas.height = window.innerHeight;
-      ctx.filter = `blur(${blur}px)`;
+      if (ctx) {
+        w = ctx.canvas.width = window.innerWidth;
+        h = ctx.canvas.height = window.innerHeight;
+        ctx.filter = `blur(${blur}px)`;
+      }
     };
     render();
   };
 
   const waveColors = colors ?? [
-    "#312e81", // Indigo 900
-    "#1e3a8a", // Blue 900
-    "#1e1b4b", // Indigo 950
-    "#0f172a", // Slate 900
-    "#134e4a", // Teal 900
+    "#4338ca", // Indigo
+    "#2563eb", // Blue
+    "#4f46e5", // Indigo brighter
+    "#1e293b", // Slate
+    "#0d9488", // Teal
   ];
+  
   const drawWave = (n: number) => {
     nt += getSpeed();
     for (i = 0; i < n; i++) {
       ctx.beginPath();
-      ctx.lineWidth = waveWidth || 50;
+      ctx.lineWidth = waveWidth || 60;
       ctx.strokeStyle = waveColors[i % waveColors.length];
       for (x = 0; x < w; x += 5) {
-        var y = noise(x / 800, 0.3 * i, nt) * 100;
-        ctx.lineTo(x, y + h * 0.5); // adjust for height, currently at 50% of the container
+        var y = noise(x / 800, 0.3 * i, nt) * 120;
+        ctx.lineTo(x, y + h * 0.5);
       }
       ctx.stroke();
       ctx.closePath();
@@ -86,9 +89,11 @@ export const WavyBackground = ({
 
   let animationId: number;
   const render = () => {
+    if (!ctx) return;
     ctx.fillStyle = backgroundFill || "#0a0a0c";
-    ctx.globalAlpha = waveOpacity || 0.5;
+    ctx.globalAlpha = 1.0;
     ctx.fillRect(0, 0, w, h);
+    ctx.globalAlpha = waveOpacity || 0.8;
     drawWave(5);
     animationId = requestAnimationFrame(render);
   };
@@ -96,13 +101,12 @@ export const WavyBackground = ({
   useEffect(() => {
     init();
     return () => {
-      cancelAnimationFrame(animationId);
+      if (animationId) cancelAnimationFrame(animationId);
     };
   }, []);
 
   const [isSafari, setIsSafari] = useState(false);
   useEffect(() => {
-    // I'm sorry but i have got to support it on safari.
     setIsSafari(
       typeof window !== "undefined" &&
         navigator.userAgent.includes("Safari") &&
@@ -113,7 +117,7 @@ export const WavyBackground = ({
   return (
     <div
       className={cn(
-        "min-h-screen flex flex-col items-center justify-center relative",
+        "relative w-full h-full flex flex-col items-center justify-center overflow-hidden",
         containerClassName
       )}
     >

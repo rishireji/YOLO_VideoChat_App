@@ -167,29 +167,31 @@ export const Sidebar: React.FC<SidebarProps> = ({
       </div>
 
       <div className="p-4 lg:p-6 bg-zinc-950 border-t border-zinc-800/50 pb-8 lg:pb-6 relative z-10 flex flex-col gap-3">
-        {/* Friend Request UI - Native to chat window */}
+        {/* Handshake Command Center */}
         {isConnected && user && remoteUid && friendStatus !== 'accepted' && (
-          <div className="flex animate-in slide-in-from-bottom-2 duration-300">
+          <div className="flex animate-in slide-in-from-bottom-2 duration-500">
             {friendStatus === 'none' && (
               <button 
                 onClick={onSocialAction}
-                className="w-full flex items-center justify-center gap-2 py-3 bg-white text-black text-[10px] font-black uppercase tracking-[0.2em] rounded-xl hover:bg-zinc-200 transition-all shadow-xl active:scale-95"
+                className="w-full flex items-center justify-center gap-2 py-3.5 bg-white text-black text-[10px] font-black uppercase tracking-[0.2em] rounded-2xl hover:bg-zinc-200 transition-all shadow-xl active:scale-95"
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M12 4v16m8-8H4"/></svg>
-                Send Friend Request
+                Send Friend Handshake
               </button>
             )}
             {friendStatus === 'sent' && (
-              <div className="w-full py-3 bg-zinc-900 border border-zinc-800 text-zinc-500 text-[10px] font-black uppercase tracking-[0.2em] rounded-xl text-center">
+              <div className="w-full py-3.5 bg-zinc-900 border border-zinc-800 text-zinc-500 text-[10px] font-black uppercase tracking-[0.2em] rounded-2xl text-center flex items-center justify-center gap-2">
+                <div className="w-2 h-2 rounded-full bg-amber-500 animate-pulse"></div>
                 Handshake Dispatched
               </div>
             )}
             {friendStatus === 'received' && (
               <button 
                 onClick={onSocialAction}
-                className="w-full py-3 bg-red-600 text-white text-[10px] font-black uppercase tracking-[0.2em] rounded-xl hover:bg-red-500 transition-all shadow-xl animate-pulse active:scale-95"
+                className="w-full py-3.5 bg-red-600 text-white text-[10px] font-black uppercase tracking-[0.2em] rounded-2xl hover:bg-red-500 transition-all shadow-xl animate-pulse active:scale-95 flex items-center justify-center gap-2"
               >
-                Accept Friend Handshake
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7"/></svg>
+                Confirm Friend Handshake
               </button>
             )}
           </div>
@@ -202,7 +204,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             onChange={(e) => setInputText(e.target.value)}
             placeholder={isConnected ? "Speak your mind..." : "Searching..."}
             disabled={!isConnected}
-            className="w-full bg-zinc-900 border border-zinc-800 hover:border-zinc-600 focus:border-red-500/50 rounded-2xl py-3.5 lg:py-4 pl-5 pr-14 text-sm transition-all outline-none disabled:opacity-40 disabled:cursor-not-allowed placeholder:text-zinc-600 text-white shadow-inner"
+            className="w-full bg-zinc-900 border border-zinc-800 hover:border-zinc-600 focus:border-red-500/50 rounded-2xl py-3.5 lg:py-4 pl-5 pr-14 text-sm transition-all outline-none disabled:opacity-40 disabled:cursor-not-allowed placeholder:text-zinc-700 text-white shadow-inner"
           />
           <button
             type="submit"

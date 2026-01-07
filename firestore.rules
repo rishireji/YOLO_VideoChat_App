@@ -3,45 +3,44 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     
-    // Profiles: Access restricted to owner OR reciprocal friends.
     match /Users/{userId} {
-      // Allow reading a profile if the user is the owner OR if the current user exists in the target's friend list.
+      // 1. Profile Visibility: Public profiles are restricted. 
+      // Full read only if owner OR reciprocal friend.
       allow read: if request.auth != null && (
         request.auth.uid == userId || 
         exists(/databases/$(database)/documents/Users/$(userId)/friends/$(request.auth.uid))
       );
       
-      // Only the owner can modify their own base profile.
+      // 2. Profile Modification: Owner only
       allow write: if request.auth != null && request.auth.uid == userId;
       
-      // Handshake: sentRequests - Strictly private to sender
+      // 3. Handshake Outbound: Owner manages their own dispatched handshakes
       match /sentRequests/{requestId} {
         allow read, write: if request.auth != null && request.auth.uid == userId;
       }
       
-      // Handshake: receivedRequests - Recipient reads, Sender writes
-      match /receivedRequests/{requestId} {
-        // Recipient can see who requested them
+      // 4. Handshake Inbound: 
+      // Create: Allowed by any authenticated user IF the document ID matches their own UID
+      // Read/Delete: Recipient (userId) only
+      match /receivedRequests/{senderId} {
+        allow create: if request.auth != null && request.auth.uid == senderId;
         allow read, delete: if request.auth != null && request.auth.uid == userId;
-        // Authenticated users can create a request in another's mailbox, provided ID matches their own
-        allow create: if request.auth != null && request.auth.uid == requestId;
       }
 
-      // Vault files: Strictly private to the owner.
+      // 5. Vault Access: Strictly owner only
       match /files/{fileId} {
         allow read, write: if request.auth != null && request.auth.uid == userId;
       }
       
-      // Friends: Reciprocal access for handshake completion.
+      // 6. Reciprocal Friendship: Read/Write if involved in the handshake
       match /friends/{friendId} {
         allow read: if request.auth != null && (request.auth.uid == userId || request.auth.uid == friendId);
-        // Both parties involved can create the friendship link during batch accept logic
         allow write: if request.auth != null && (request.auth.uid == userId || request.auth.uid == friendId);
         allow delete: if request.auth != null && (request.auth.uid == userId || request.auth.uid == friendId);
       }
     }
     
-    // Default Deny
+    // Strict Global Deny
     match /{document=**} {
       allow read, write: if false;
     }

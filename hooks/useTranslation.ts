@@ -1,6 +1,5 @@
-
 import { useCallback } from 'react';
-import { GoogleGenAI, Type } from "@google/genai";
+import { aiService } from '../services/aiService';
 
 export interface TranslationResult {
   translatedText: string;
@@ -10,37 +9,8 @@ export interface TranslationResult {
 export const useTranslation = () => {
   const translateText = useCallback(async (text: string, targetLanguage: string): Promise<TranslationResult | null> => {
     try {
-      // Fix: Always use named parameter and process.env.API_KEY directly for GoogleGenAI initialization.
-      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-      const response = await ai.models.generateContent({
-        model: 'gemini-3-flash-preview',
-        contents: `Translate the following text into ${targetLanguage}. 
-        Identify the source language. 
-        Ensure you preserve the original intent, tone, and casual conversational context. 
-        If the original uses slang, translate it to equivalent slang in the target language.
-        
-        Text: "${text}"`,
-        config: {
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              translatedText: {
-                type: Type.STRING,
-                description: "The translated version of the input text."
-              },
-              detectedLanguage: {
-                type: Type.STRING,
-                description: "The name of the detected source language (e.g., 'Spanish', 'Japanese')."
-              }
-            },
-            required: ["translatedText", "detectedLanguage"]
-          }
-        }
-      });
-
-      const textOutput = response.text || '{}';
-      const result = JSON.parse(textOutput);
+      const result = await aiService.translate(text, targetLanguage);
+      if (!result) return null;
       return result as TranslationResult;
     } catch (error) {
       console.error("[YOLO Translation] Error:", error);
