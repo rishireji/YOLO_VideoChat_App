@@ -117,20 +117,36 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return () => { unsubFriends(); unsubSent(); unsubReceived(); unsubFiles(); };
   };
 
-  useEffect(() => {
-    const auth = getAuth();
-    const unsubscribeAuth = auth.onAuthStateChanged(async (u) => {
+useEffect(() => {
+  const auth = getAuth();
+
+  const unsubscribeAuth = auth.onAuthStateChanged(async (u) => {
+    try {
       if (u && u.email && u.emailVerified) {
-        setUser({ email: u.email, uid: u.uid, displayName: u.displayName, photoURL: u.photoURL, emailVerified: u.emailVerified });
-        const unsub = await syncUserWithFirestore(u.uid, u.email);
-        return () => { if (unsub) unsub(); };
+        setUser({
+          email: u.email,
+          uid: u.uid,
+          displayName: u.displayName,
+          photoURL: u.photoURL,
+          emailVerified: u.emailVerified,
+        });
+
+        await syncUserWithFirestore(u.uid, u.email);
       } else {
-        setUser(null); setProfile(null); setFriendProfiles([]); setSentRequests([]); setReceivedRequests([]); setFiles([]);
+        setUser(null);
+        setProfile(null);
       }
+    } catch (err) {
+      console.error('[Auth] Init failed:', err);
+      setUser(null);
+    } finally {
+      // ✅ ALWAYS RUN
       setLoading(false);
-    });
-    return () => unsubscribeAuth();
-  }, []);
+    }
+  });
+
+  return () => unsubscribeAuth();
+}, []);
 
   const signIn = async (e: string, p: string) => {
     const cred = await getAuth().signInWithEmailAndPassword(e, p);
