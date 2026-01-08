@@ -63,6 +63,8 @@ export const useWebRTC = (
   const blacklistRef = useRef<Set<string>>(new Set());
   const lockRef = useRef<string | null>(null); 
   const isClosingRef = useRef(false);
+  const myIdRef = useRef<string | null>(null);
+
   const isInitiator = myId < msg.peerId;
 
 
@@ -214,7 +216,7 @@ if (msg.type === 'presence' && msg.peerId !== myId) {
   if (!lockRef.current && !blacklistRef.current.has(msg.peerId)) {
 
     // 🔒 Deterministic rule: smaller ID proposes
-    if (myId < msg.peerId) {
+    if (myIdRef.current! < msg.peerId) {
       console.log(`[YOLO] Matcher: Proposing to ${msg.peerId}`);
       lockRef.current = msg.peerId;
 
@@ -253,10 +255,15 @@ if (msg.type === 'presence' && msg.peerId !== myId) {
         // 3. Acceptance Received
 if (msg.type === 'match-accept' && msg.targetId === myId) {
   // Only initiator starts the call
-  if (lockRef.current === msg.fromId && myId < msg.fromId) {
-    stopProposal();
-    initiateP2P(msg.fromId, stream);
-  }
+if (
+  lockRef.current === msg.fromId &&
+  myIdRef.current &&
+  myIdRef.current < msg.fromId
+) {
+  stopProposal();
+  initiateP2P(msg.fromId, stream);
+}
+
 }
 
 
@@ -307,13 +314,19 @@ ws.onclose = () => {
         const peer = new Peer(uniqueId, { debug: 1, config: ICE_CONFIG, secure: true });
         peerRef.current = peer;
 
-        peer.on('open', (id) => {
-          if (mounted) connectSignaling(id, stream);
-        });
+       peer.on('open', (id) => {
+  myIdRef.current = id;
+  if (mounted) connectSignaling(id, stream);
+});
+
 
 peer.on('call', (incoming) => {
+  const myId = myIdRef.current;
+
   const shouldAnswer =
-    lockRef.current === incoming.peer && myId > incoming.peer;
+    !!myId &&
+    lockRef.current === incoming.peer &&
+    myId > incoming.peer;
 
   if (shouldAnswer) {
     stopProposal();
@@ -325,6 +338,7 @@ peer.on('call', (incoming) => {
     incoming.close();
   }
 });
+
 
 
         peer.on('connection', (conn) => {
