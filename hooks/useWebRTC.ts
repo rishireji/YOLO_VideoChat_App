@@ -65,8 +65,6 @@ export const useWebRTC = (
   const isClosingRef = useRef(false);
   const myIdRef = useRef<string | null>(null);
 
-  const isInitiator = myId < msg.peerId;
-
 
   // --- Helpers ---
   const updateStatus = useCallback((newStatus: WebRTCStatus) => {
@@ -107,25 +105,40 @@ const broadcast = useCallback((payload: object) => {
   }, [stopProposal]);
 
 const skip = useCallback((shouldBlacklist = false) => {
+  // 1️⃣ Optional blacklist
   if (shouldBlacklist && lockRef.current) {
     const target = lockRef.current;
     blacklistRef.current.add(target);
     setTimeout(() => blacklistRef.current.delete(target), 30000);
   }
 
-  isClosingRef.current = false;
+  // 2️⃣ Hard guard: skip owns the reconnect
+  isClosingRef.current = true;
   lockRef.current = null;
 
+  // 3️⃣ Close signaling explicitly
   if (wsRef.current) {
     wsRef.current.close();
     wsRef.current = null;
   }
 
+  // 4️⃣ Reset signaling state
   pendingMessagesRef.current = [];
 
+  // 5️⃣ Cleanup P2P
   cleanup();
   updateStatus('matching');
-}, [cleanup, updateStatus]);
+
+  // 6️⃣ Reconnect signaling safely (next tick)
+  setTimeout(() => {
+    isClosingRef.current = false;
+    const myId = myIdRef.current;
+    if (myId && localStream) {
+      connectSignaling(myId, localStream);
+    }
+  }, 0);
+}, [cleanup, updateStatus, connectSignaling, localStream]);
+
 
 
   const revealIdentity = useCallback(() => {
@@ -207,92 +220,108 @@ ws.onopen = () => {
 };
 
 
-    ws.onmessage = (e) => {
-      try {
-        const msg = JSON.parse(e.data);
-        
-        // 1. Presence Received
-if (msg.type === 'presence' && msg.peerId !== myId) {
-  if (!lockRef.current && !blacklistRef.current.has(msg.peerId)) {
+ws.onmessage = (e) => {
+  try {
+    const msg = JSON.parse(e.data);
+    const myId = myIdRef.current;
+    if (!myId) return;
 
-    // 🔒 Deterministic rule: smaller ID proposes
-    if (myIdRef.current! < msg.peerId) {
-      console.log(`[YOLO] Matcher: Proposing to ${msg.peerId}`);
-      lockRef.current = msg.peerId;
+    // Ignore self events
+    if (msg.peerId && msg.peerId === myId) return;
 
-      const attemptProposal = () => {
+    // 1️⃣ Presence
+    if (msg.type === 'presence' && msg.peerId !== myId) {
+      if (!lockRef.current && !blacklistRef.current.has(msg.peerId)) {
+        if (myId < msg.peerId) {
+          lockRef.current = msg.peerId;
+
+          const attemptProposal = () => {
+            broadcast({
+              type: 'match-propose',
+              targetId: msg.peerId,
+              fromId: myId
+            });
+          };
+
+          stopProposal();
+          attemptProposal();
+          proposalIntervalRef.current = setInterval(attemptProposal, 1500);
+
+          handshakeTimeoutRef.current = setTimeout(() => {
+            if (lockRef.current === msg.peerId) skip(true);
+          }, 6000);
+        }
+      }
+      return;
+    }
+
+    // 2️⃣ Match proposal
+    if (msg.type === 'match-propose' && msg.targetId === myId) {
+      if (!lockRef.current) {
+        lockRef.current = msg.fromId;
+        stopProposal();
+        updateStatus('connecting');
+
         broadcast({
-          type: 'match-propose',
-          targetId: msg.peerId,
+          type: 'match-accept',
+          targetId: msg.fromId,
           fromId: myId
         });
-      };
-
-      stopProposal();
-      attemptProposal();
-      proposalIntervalRef.current = setInterval(attemptProposal, 1500);
-
-      handshakeTimeoutRef.current = setTimeout(() => {
-        if (lockRef.current === msg.peerId) skip(true);
-      }, 6000);
-    }
-  }
-}
-
-
-        // 2. Proposal Received
-        if (msg.type === 'match-propose' && msg.targetId === myId) {
-          if (!lockRef.current) {
-            lockRef.current = msg.fromId;
-            stopProposal();
-            updateStatus('connecting');
-            broadcast({ type: 'match-accept', targetId: msg.fromId, fromId: myId });
-          } else if (lockRef.current === msg.fromId) {
-             // already locked on this peer, ignore
-          }
-        }
-
-        // 3. Acceptance Received
-if (msg.type === 'match-accept' && msg.targetId === myId) {
-  // Only initiator starts the call
-if (
-  lockRef.current === msg.fromId &&
-  myIdRef.current &&
-  myIdRef.current < msg.fromId
-) {
-  stopProposal();
-  initiateP2P(msg.fromId, stream);
-}
-
-}
-
-
-        if (msg.event === 'system:member_left') {
-          if (lockRef.current) skip(false);
-        }
-
-      } catch (err) {
-        console.error("[YOLO] Signaling Message Error:", err);
       }
-    };
+      return;
+    }
 
-ws.onclose = () => {
-  if (isClosingRef.current) return;
+    // 3️⃣ Match acceptance (initiator only)
+    if (msg.type === 'match-accept' && msg.targetId === myId) {
+      if (lockRef.current === msg.fromId && myId < msg.fromId) {
+        stopProposal();
+        initiateP2P(msg.fromId, stream);
+      }
+      return;
+    }
 
-  isClosingRef.current = true;
-  pendingMessagesRef.current = [];
+    // 4️⃣ Peer left
+    if (msg.event === 'system:member_left') {
+      if (lockRef.current) skip(false);
+    }
 
-  updateStatus('signaling_offline');
-
-  setTimeout(() => {
-    isClosingRef.current = false;
-    connectSignaling(myId, stream);
-  }, 3000);
+  } catch (err) {
+    console.error("[YOLO] Signaling Message Error:", err);
+  }
 };
 
 
-    ws.onerror = () => ws.close();
-  }, [region, gender, interests, broadcast, initiateP2P, skip, stopProposal, updateStatus]);
+ws.onclose = () => {
+  if (isClosingRef.current) return;
+  isClosingRef.current = true;
+
+  pendingMessagesRef.current = [];
+  updateStatus('signaling_offline');
+
+setTimeout(() => {
+  const myId = myIdRef.current;
+  const stream = localStream;
+  if (!myId || !stream) return;
+
+  isClosingRef.current = false;
+  connectSignaling(myId, stream);
+}, 3000);
+
+};
+ws.onerror = () => {
+  ws.close();
+};
+}, [
+  region,
+  gender,
+  interests,
+  broadcast,
+  initiateP2P,
+  skip,
+  stopProposal,
+  updateStatus
+]);
+
 
   // --- Init Effect ---
   useEffect(() => {
