@@ -40,6 +40,73 @@
       ::-webkit-scrollbar-thumb:hover {
         background: #444;
       }
+
+      @keyframes floatUpEnhanced {
+        0% {
+          transform: translateY(0) rotate(var(--rotation)) scale(0.5);
+          opacity: 0;
+        }
+        20% {
+          opacity: 1;
+          transform: translateY(-20px) rotate(var(--rotation)) scale(1.2);
+        }
+        100% {
+          transform: translateY(-400px) rotate(var(--rotation)) scale(1);
+          opacity: 0;
+        }
+      }
+
+      @keyframes radar-sweep {
+        from { transform: rotate(0deg); }
+        to { transform: rotate(360deg); }
+      }
+      .animate-radar {
+        animation: radar-sweep 8s linear infinite;
+      }
+      
+      @keyframes spin-reverse {
+        from { transform: rotate(360deg); }
+        to { transform: rotate(0deg); }
+      }
+      .animate-spin-reverse {
+        animation: spin-reverse 3s linear infinite;
+      }
+
+      @keyframes grid-drift {
+        0% { background-position: 0 0; }
+        100% { background-position: 100px 100px; }
+      }
+      .animate-grid {
+        animation: grid-drift 20s linear infinite;
+      }
+
+      @keyframes pulse-fast {
+        0%, 100% { opacity: 0.1; }
+        50% { opacity: 0.4; }
+      }
+      .animate-pulse-fast {
+        animation: pulse-fast 2s ease-in-out infinite;
+      }
+
+      .perspective-grid {
+        perspective: 1000px;
+        transform-style: preserve-3d;
+      }
+
+      .scanline-effect::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background: linear-gradient(
+          to bottom,
+          transparent 0%,
+          rgba(239, 68, 68, 0.05) 50%,
+          transparent 51%
+        );
+        background-size: 100% 4px;
+        pointer-events: none;
+        z-index: 50;
+      }
     </style>
   <script type="importmap">
 {

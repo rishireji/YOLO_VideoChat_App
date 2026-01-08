@@ -35,11 +35,11 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ onExit }) => {
   const [remoteUid, setRemoteUid] = useState<string | null>(null);
   const hasDeductedRef = useRef<string | null>(null);
 
-  const handleReactionReceived = useCallback((type: ReactionType) => {
+  const handleReactionReceived = useCallback((type: ReactionType, isLocal: boolean = false) => {
     const id = Math.random().toString(36).substring(7);
     const x = 10 + Math.random() * 80;
     const rotation = -30 + Math.random() * 60;
-    setActiveReactions(prev => [...prev, { id, type, x, rotation, isLocal: false }]);
+    setActiveReactions(prev => [...prev, { id, type, x, rotation, isLocal }]);
     setTimeout(() => setActiveReactions(prev => prev.filter(r => r.id !== id)), 2500);
   }, []);
 
@@ -110,7 +110,7 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ onExit }) => {
     revealIdentity,
   } = useWebRTC(
     session?.region || 'global',     
-    handleReactionReceived,          
+    (type) => handleReactionReceived(type, false), // Remote reaction
     handleMessageReceived,           
     (session as any)?.gender,        
     (session as any)?.interests      
@@ -127,14 +127,26 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ onExit }) => {
   useModeration(localStream);
 
   // Identity broadcast logic: Automatic exchange when both are signed in
+  // We broadcast periodically until we have a confirmation or the session ends
   useEffect(() => {
     if (appState === AppState.CONNECTED && user && status === 'connected') {
       const identityMsg = JSON.stringify({ type: 'identity', uid: user.uid });
-      // We send it multiple times with a small delay to ensure data channel availability
-      const timer = setTimeout(() => sendMessage(identityMsg), 1000);
-      return () => clearTimeout(timer);
+      
+      const broadcastInterval = setInterval(() => {
+        // Only broadcast if we haven't received remote ID yet, to reduce noise
+        if (!remoteUid) {
+          sendMessage(identityMsg);
+        } else {
+          clearInterval(broadcastInterval);
+        }
+      }, 3000);
+
+      // Initial broadcast
+      sendMessage(identityMsg);
+
+      return () => clearInterval(broadcastInterval);
     }
-  }, [appState, user, status, sendMessage]);
+  }, [appState, user, status, sendMessage, remoteUid]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -211,7 +223,22 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ onExit }) => {
           </div>
 
           <div className={`absolute bottom-5 left-1/2 -translate-x-1/2 z-50 transition-all duration-500 ${isUserActive || appState === AppState.MATCHMAKING ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4 pointer-events-none'}`}>
-            <Controls appState={appState} onNext={skip} onExit={onExit} isMuted={isMuted} isVideoOff={isVideoOff} onToggleMute={toggleMute} onToggleVideo={toggleVideo} onReport={() => setIsReportModalOpen(true)} onSendReaction={(type) => { if (appState === AppState.CONNECTED) { sendReaction(type); handleReactionReceived(type); } }} />
+            <Controls 
+              appState={appState} 
+              onNext={skip} 
+              onExit={onExit} 
+              isMuted={isMuted} 
+              isVideoOff={isVideoOff} 
+              onToggleMute={toggleMute} 
+              onToggleVideo={toggleVideo} 
+              onReport={() => setIsReportModalOpen(true)} 
+              onSendReaction={(type) => { 
+                if (appState === AppState.CONNECTED) { 
+                  sendReaction(type); 
+                  handleReactionReceived(type, true); // Local reaction
+                } 
+              }} 
+            />
           </div>
         </div>
       </div>
