@@ -56,24 +56,32 @@ export const useWebRTC = (
   const callRef = useRef<MediaConnection | null>(null);
   const connRef = useRef<DataConnection | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
-  
+  const pendingMessagesRef = useRef<string[]>([]);
+
   const proposalIntervalRef = useRef<any>(null);
   const handshakeTimeoutRef = useRef<any>(null);
   const blacklistRef = useRef<Set<string>>(new Set());
   const lockRef = useRef<string | null>(null); 
   const isClosingRef = useRef(false);
+  const isInitiator = myId < msg.peerId;
+
 
   // --- Helpers ---
   const updateStatus = useCallback((newStatus: WebRTCStatus) => {
     setStatusState(newStatus);
   }, []);
 
-  const broadcast = useCallback((payload: object) => {
-    const ws = wsRef.current;
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify(payload));
-    }
-  }, []);
+const broadcast = useCallback((payload: object) => {
+  const ws = wsRef.current;
+  const msg = JSON.stringify(payload);
+
+  if (ws?.readyState === WebSocket.OPEN) {
+    ws.send(msg);
+  } else {
+    pendingMessagesRef.current.push(msg);
+  }
+}, []);
+
 
   const stopProposal = useCallback(() => {
     if (proposalIntervalRef.current) {
@@ -96,16 +104,27 @@ export const useWebRTC = (
     setRemoteStream(null);
   }, [stopProposal]);
 
-  const skip = useCallback((shouldBlacklist: boolean = false) => {
-    if (shouldBlacklist && lockRef.current) {
-      const target = lockRef.current;
-      blacklistRef.current.add(target);
-      setTimeout(() => blacklistRef.current.delete(target), 30000);
-    }
-    cleanup();
-    updateStatus('matching');
-    broadcast({ type: 'presence', peerId: peerRef.current?.id, status: 'matching' });
-  }, [cleanup, updateStatus, broadcast]);
+const skip = useCallback((shouldBlacklist = false) => {
+  if (shouldBlacklist && lockRef.current) {
+    const target = lockRef.current;
+    blacklistRef.current.add(target);
+    setTimeout(() => blacklistRef.current.delete(target), 30000);
+  }
+
+  isClosingRef.current = false;
+  lockRef.current = null;
+
+  if (wsRef.current) {
+    wsRef.current.close();
+    wsRef.current = null;
+  }
+
+  pendingMessagesRef.current = [];
+
+  cleanup();
+  updateStatus('matching');
+}, [cleanup, updateStatus]);
+
 
   const revealIdentity = useCallback(() => {
     if (connRef.current?.open) {
@@ -168,37 +187,56 @@ export const useWebRTC = (
     const ws = new WebSocket(endpoint);
     wsRef.current = ws;
     
-    ws.onopen = () => {
-      console.log("[YOLO] Signaling: Online.");
-      updateStatus('matching');
-      broadcast({ type: 'presence', peerId: myId, status: 'matching', gender, interests });
-    };
+ws.onopen = () => {
+  console.log("[YOLO] Signaling: Online.");
+
+  // Flush queued messages
+  pendingMessagesRef.current.forEach(msg => ws.send(msg));
+  pendingMessagesRef.current = [];
+
+  updateStatus('matching');
+  broadcast({
+    type: 'presence',
+    peerId: myId,
+    status: 'matching',
+    gender,
+    interests
+  });
+};
+
 
     ws.onmessage = (e) => {
       try {
         const msg = JSON.parse(e.data);
         
         // 1. Presence Received
-        if (msg.type === 'presence' && msg.peerId !== myId) {
-          if (!lockRef.current && !blacklistRef.current.has(msg.peerId)) {
-            console.log(`[YOLO] Matcher: New peer ${msg.peerId} detected. Locking.`);
-            lockRef.current = msg.peerId;
-            
-            const attemptProposal = () => {
-              broadcast({ type: 'match-propose', targetId: msg.peerId, fromId: myId });
-            };
-            
-            stopProposal();
-            attemptProposal();
-            proposalIntervalRef.current = setInterval(attemptProposal, 1500);
+if (msg.type === 'presence' && msg.peerId !== myId) {
+  if (!lockRef.current && !blacklistRef.current.has(msg.peerId)) {
 
-            handshakeTimeoutRef.current = setTimeout(() => {
-              if (lockRef.current === msg.peerId) {
-                skip(true);
-              }
-            }, 6000);
-          }
-        }
+    // 🔒 Deterministic rule: smaller ID proposes
+    if (myId < msg.peerId) {
+      console.log(`[YOLO] Matcher: Proposing to ${msg.peerId}`);
+      lockRef.current = msg.peerId;
+
+      const attemptProposal = () => {
+        broadcast({
+          type: 'match-propose',
+          targetId: msg.peerId,
+          fromId: myId
+        });
+      };
+
+      stopProposal();
+      attemptProposal();
+      proposalIntervalRef.current = setInterval(attemptProposal, 1500);
+
+      handshakeTimeoutRef.current = setTimeout(() => {
+        if (lockRef.current === msg.peerId) skip(true);
+      }, 6000);
+    }
+  }
+}
+
 
         // 2. Proposal Received
         if (msg.type === 'match-propose' && msg.targetId === myId) {
@@ -213,12 +251,14 @@ export const useWebRTC = (
         }
 
         // 3. Acceptance Received
-        if (msg.type === 'match-accept' && msg.targetId === myId) {
-          if (lockRef.current === msg.fromId) {
-            stopProposal();
-            initiateP2P(msg.fromId, stream);
-          }
-        }
+if (msg.type === 'match-accept' && msg.targetId === myId) {
+  // Only initiator starts the call
+  if (lockRef.current === msg.fromId && myId < msg.fromId) {
+    stopProposal();
+    initiateP2P(msg.fromId, stream);
+  }
+}
+
 
         if (msg.event === 'system:member_left') {
           if (lockRef.current) skip(false);
@@ -229,11 +269,20 @@ export const useWebRTC = (
       }
     };
 
-    ws.onclose = () => {
-      if (isClosingRef.current) return;
-      updateStatus('signaling_offline');
-      setTimeout(() => connectSignaling(myId, stream), 3000);
-    };
+ws.onclose = () => {
+  if (isClosingRef.current) return;
+
+  isClosingRef.current = true;
+  pendingMessagesRef.current = [];
+
+  updateStatus('signaling_offline');
+
+  setTimeout(() => {
+    isClosingRef.current = false;
+    connectSignaling(myId, stream);
+  }, 3000);
+};
+
 
     ws.onerror = () => ws.close();
   }, [region, gender, interests, broadcast, initiateP2P, skip, stopProposal, updateStatus]);
@@ -262,17 +311,21 @@ export const useWebRTC = (
           if (mounted) connectSignaling(id, stream);
         });
 
-        peer.on('call', (incoming) => {
-          if (lockRef.current && incoming.peer === lockRef.current) {
-            stopProposal(); 
-            updateStatus('connecting');
-            setRemotePeerId(incoming.peer);
-            incoming.answer(stream);
-            setupCallHandlers(incoming);
-          } else {
-            incoming.close();
-          }
-        });
+peer.on('call', (incoming) => {
+  const shouldAnswer =
+    lockRef.current === incoming.peer && myId > incoming.peer;
+
+  if (shouldAnswer) {
+    stopProposal();
+    updateStatus('connecting');
+    setRemotePeerId(incoming.peer);
+    incoming.answer(stream);
+    setupCallHandlers(incoming);
+  } else {
+    incoming.close();
+  }
+});
+
 
         peer.on('connection', (conn) => {
           if (lockRef.current && conn.peer === lockRef.current) {
