@@ -65,23 +65,24 @@ export const useWebRTC = (
   const isClosingRef = useRef(false);
   const myIdRef = useRef<string | null>(null);
 
+  // 🔥 Ref to hold connectSignaling to break circular dependency
+  const connectSignalingRef = useRef<((myId: string, stream: MediaStream) => void) | null>(null);
 
   // --- Helpers ---
   const updateStatus = useCallback((newStatus: WebRTCStatus) => {
     setStatusState(newStatus);
   }, []);
 
-const broadcast = useCallback((payload: object) => {
-  const ws = wsRef.current;
-  const msg = JSON.stringify(payload);
+  const broadcast = useCallback((payload: object) => {
+    const ws = wsRef.current;
+    const msg = JSON.stringify(payload);
 
-  if (ws?.readyState === WebSocket.OPEN) {
-    ws.send(msg);
-  } else {
-    pendingMessagesRef.current.push(msg);
-  }
-}, []);
-
+    if (ws?.readyState === WebSocket.OPEN) {
+      ws.send(msg);
+    } else {
+      pendingMessagesRef.current.push(msg);
+    }
+  }, []);
 
   const stopProposal = useCallback(() => {
     if (proposalIntervalRef.current) {
@@ -104,47 +105,45 @@ const broadcast = useCallback((payload: object) => {
     setRemoteStream(null);
   }, [stopProposal]);
 
-const skip = useCallback((shouldBlacklist = false) => {
-  // 1️⃣ Optional blacklist
-  if (shouldBlacklist && lockRef.current) {
-    const target = lockRef.current;
-    blacklistRef.current.add(target);
-    setTimeout(() => blacklistRef.current.delete(target), 30000);
-  }
-
-  // 2️⃣ Hard guard: skip owns the reconnect
-  isClosingRef.current = true;
-  lockRef.current = null;
-
-  // 3️⃣ Close signaling explicitly
-  if (wsRef.current) {
-    wsRef.current.close();
-    wsRef.current = null;
-  }
-
-  // 4️⃣ Reset signaling state
-  pendingMessagesRef.current = [];
-
-  // 5️⃣ Cleanup P2P
-  cleanup();
-  updateStatus('matching');
-
-  // 6️⃣ Reconnect signaling safely (next tick)
-  setTimeout(() => {
-    isClosingRef.current = false;
-    const myId = myIdRef.current;
-    if (myId && localStream) {
-      connectSignaling(myId, localStream);
+  const skip = useCallback((shouldBlacklist: boolean = false) => {
+    // 1️⃣ Optional blacklist
+    if (shouldBlacklist && lockRef.current) {
+      const target = lockRef.current;
+      blacklistRef.current.add(target);
+      setTimeout(() => blacklistRef.current.delete(target), 30000);
     }
-  }, 0);
-}, [cleanup, updateStatus, connectSignaling, localStream]);
 
+    // 2️⃣ Hard guard: skip owns the reconnect
+    isClosingRef.current = true;
+    lockRef.current = null;
 
+    // 3️⃣ Close signaling explicitly
+    if (wsRef.current) {
+      wsRef.current.close();
+      wsRef.current = null;
+    }
+
+    // 4️⃣ Reset signaling state
+    pendingMessagesRef.current = [];
+
+    // 5️⃣ Cleanup P2P
+    cleanup();
+    updateStatus('matching');
+
+    // 6️⃣ Reconnect signaling safely (next tick)
+    setTimeout(() => {
+      isClosingRef.current = false;
+      const myId = myIdRef.current;
+      if (myId && localStream) {
+        // Use the Ref here to avoid circular dependency errors in TS
+        connectSignalingRef.current?.(myId, localStream);
+      }
+    }, 0);
+  }, [cleanup, updateStatus, localStream]);
 
   const revealIdentity = useCallback(() => {
     if (connRef.current?.open) {
       console.log("[YOLO] Revealing Identity...");
-      // FIX: Cast session to any to bypass TS error
       connRef.current.send({ type: 'reveal-identity', user: (session as any)?.user });
     }
   }, [session]);
@@ -202,126 +201,129 @@ const skip = useCallback((shouldBlacklist = false) => {
     const ws = new WebSocket(endpoint);
     wsRef.current = ws;
     
-ws.onopen = () => {
-  console.log("[YOLO] Signaling: Online.");
+    ws.onopen = () => {
+      console.log("[YOLO] Signaling: Online.");
 
-  // Flush queued messages
-  pendingMessagesRef.current.forEach(msg => ws.send(msg));
-  pendingMessagesRef.current = [];
+      // Flush queued messages
+      pendingMessagesRef.current.forEach(msg => ws.send(msg));
+      pendingMessagesRef.current = [];
 
-  updateStatus('matching');
-  broadcast({
-    type: 'presence',
-    peerId: myId,
-    status: 'matching',
-    gender,
-    interests
-  });
-};
+      updateStatus('matching');
+      broadcast({
+        type: 'presence',
+        peerId: myId,
+        status: 'matching',
+        gender,
+        interests
+      });
+    };
 
+    ws.onmessage = (e) => {
+      try {
+        const msg = JSON.parse(e.data);
+        const myId = myIdRef.current;
+        if (!myId) return;
 
-ws.onmessage = (e) => {
-  try {
-    const msg = JSON.parse(e.data);
-    const myId = myIdRef.current;
-    if (!myId) return;
+        // Ignore self events
+        if (msg.peerId && msg.peerId === myId) return;
 
-    // Ignore self events
-    if (msg.peerId && msg.peerId === myId) return;
+        // 1️⃣ Presence
+        if (msg.type === 'presence' && msg.peerId !== myId) {
+          if (!lockRef.current && !blacklistRef.current.has(msg.peerId)) {
+            if (myId < msg.peerId) {
+              lockRef.current = msg.peerId;
 
-    // 1️⃣ Presence
-    if (msg.type === 'presence' && msg.peerId !== myId) {
-      if (!lockRef.current && !blacklistRef.current.has(msg.peerId)) {
-        if (myId < msg.peerId) {
-          lockRef.current = msg.peerId;
+              const attemptProposal = () => {
+                broadcast({
+                  type: 'match-propose',
+                  targetId: msg.peerId,
+                  fromId: myId
+                });
+              };
 
-          const attemptProposal = () => {
+              stopProposal();
+              attemptProposal();
+              proposalIntervalRef.current = setInterval(attemptProposal, 1500);
+
+              handshakeTimeoutRef.current = setTimeout(() => {
+                if (lockRef.current === msg.peerId) skip(true);
+              }, 6000);
+            }
+          }
+          return;
+        }
+
+        // 2️⃣ Match proposal
+        if (msg.type === 'match-propose' && msg.targetId === myId) {
+          if (!lockRef.current) {
+            lockRef.current = msg.fromId;
+            stopProposal();
+            updateStatus('connecting');
+
             broadcast({
-              type: 'match-propose',
-              targetId: msg.peerId,
+              type: 'match-accept',
+              targetId: msg.fromId,
               fromId: myId
             });
-          };
-
-          stopProposal();
-          attemptProposal();
-          proposalIntervalRef.current = setInterval(attemptProposal, 1500);
-
-          handshakeTimeoutRef.current = setTimeout(() => {
-            if (lockRef.current === msg.peerId) skip(true);
-          }, 6000);
+          }
+          return;
         }
+
+        // 3️⃣ Match acceptance (initiator only)
+        if (msg.type === 'match-accept' && msg.targetId === myId) {
+          if (lockRef.current === msg.fromId && myId < msg.fromId) {
+            stopProposal();
+            initiateP2P(msg.fromId, stream);
+          }
+          return;
+        }
+
+        // 4️⃣ Peer left
+        if (msg.event === 'system:member_left') {
+          if (lockRef.current) skip(false);
+        }
+
+      } catch (err) {
+        console.error("[YOLO] Signaling Message Error:", err);
       }
-      return;
-    }
+    };
 
-    // 2️⃣ Match proposal
-    if (msg.type === 'match-propose' && msg.targetId === myId) {
-      if (!lockRef.current) {
-        lockRef.current = msg.fromId;
-        stopProposal();
-        updateStatus('connecting');
+    ws.onclose = () => {
+      if (isClosingRef.current) return;
+      isClosingRef.current = true;
 
-        broadcast({
-          type: 'match-accept',
-          targetId: msg.fromId,
-          fromId: myId
-        });
-      }
-      return;
-    }
+      pendingMessagesRef.current = [];
+      updateStatus('signaling_offline');
 
-    // 3️⃣ Match acceptance (initiator only)
-    if (msg.type === 'match-accept' && msg.targetId === myId) {
-      if (lockRef.current === msg.fromId && myId < msg.fromId) {
-        stopProposal();
-        initiateP2P(msg.fromId, stream);
-      }
-      return;
-    }
+      setTimeout(() => {
+        const myId = myIdRef.current;
+        const stream = localStream;
+        if (!myId || !stream) return;
 
-    // 4️⃣ Peer left
-    if (msg.event === 'system:member_left') {
-      if (lockRef.current) skip(false);
-    }
+        isClosingRef.current = false;
+        connectSignaling(myId, stream);
+      }, 3000);
 
-  } catch (err) {
-    console.error("[YOLO] Signaling Message Error:", err);
-  }
-};
+    };
+    ws.onerror = () => {
+      ws.close();
+    };
+  }, [
+    region,
+    gender,
+    interests,
+    broadcast,
+    initiateP2P,
+    skip,
+    stopProposal,
+    updateStatus,
+    localStream // Added localStream dependency as it is used in the close handler
+  ]);
 
-
-ws.onclose = () => {
-  if (isClosingRef.current) return;
-  isClosingRef.current = true;
-
-  pendingMessagesRef.current = [];
-  updateStatus('signaling_offline');
-
-setTimeout(() => {
-  const myId = myIdRef.current;
-  const stream = localStream;
-  if (!myId || !stream) return;
-
-  isClosingRef.current = false;
-  connectSignaling(myId, stream);
-}, 3000);
-
-};
-ws.onerror = () => {
-  ws.close();
-};
-}, [
-  region,
-  gender,
-  interests,
-  broadcast,
-  initiateP2P,
-  skip,
-  stopProposal,
-  updateStatus
-]);
-
+  // 🔥 Update the ref whenever connectSignaling changes
+  useEffect(() => {
+    connectSignalingRef.current = connectSignaling;
+  }, [connectSignaling]);
 
   // --- Init Effect ---
   useEffect(() => {
@@ -343,32 +345,29 @@ ws.onerror = () => {
         const peer = new Peer(uniqueId, { debug: 1, config: ICE_CONFIG, secure: true });
         peerRef.current = peer;
 
-       peer.on('open', (id) => {
-  myIdRef.current = id;
-  if (mounted) connectSignaling(id, stream);
-});
+        peer.on('open', (id) => {
+          myIdRef.current = id;
+          if (mounted) connectSignaling(id, stream);
+        });
 
+        peer.on('call', (incoming) => {
+          const myId = myIdRef.current;
 
-peer.on('call', (incoming) => {
-  const myId = myIdRef.current;
+          const shouldAnswer =
+            !!myId &&
+            lockRef.current === incoming.peer &&
+            myId > incoming.peer;
 
-  const shouldAnswer =
-    !!myId &&
-    lockRef.current === incoming.peer &&
-    myId > incoming.peer;
-
-  if (shouldAnswer) {
-    stopProposal();
-    updateStatus('connecting');
-    setRemotePeerId(incoming.peer);
-    incoming.answer(stream);
-    setupCallHandlers(incoming);
-  } else {
-    incoming.close();
-  }
-});
-
-
+          if (shouldAnswer) {
+            stopProposal();
+            updateStatus('connecting');
+            setRemotePeerId(incoming.peer);
+            incoming.answer(stream);
+            setupCallHandlers(incoming);
+          } else {
+            incoming.close();
+          }
+        });
 
         peer.on('connection', (conn) => {
           if (lockRef.current && conn.peer === lockRef.current) {
