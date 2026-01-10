@@ -84,8 +84,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setProfile(doc.data() as UserProfile);
     }
 
-    const unsubFriends = userDocRef.collection('friends').onSnapshot(async (snap) => {
-      const uids = snap.docs.map(d => d.id);
+    // Safety wrapper for listeners
+    const safeSubscribe = (ref: any, callback: (snap: any) => void) => {
+      return ref.onSnapshot(callback, (err: any) => {
+        console.warn("[YOLO Auth] Listener permission error suppressed:", err.code);
+      });
+    };
+
+    const unsubFriends = safeSubscribe(userDocRef.collection('friends'), async (snap: any) => {
+      const uids = snap.docs.map((d: any) => d.id);
       if (uids.length === 0) {
         setFriendProfiles([]);
         return;
@@ -102,16 +109,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setFriendProfiles(resolved);
     });
 
-    const unsubSent = userDocRef.collection('sentRequests').onSnapshot(snap => {
-      setSentRequests(snap.docs.map(d => ({ ...d.data(), uid: d.id } as FriendRequest)));
+    const unsubSent = safeSubscribe(userDocRef.collection('sentRequests'), (snap: any) => {
+      setSentRequests(snap.docs.map((d: any) => ({ ...d.data(), uid: d.id } as FriendRequest)));
     });
 
-    const unsubReceived = userDocRef.collection('receivedRequests').onSnapshot(snap => {
-      setReceivedRequests(snap.docs.map(d => ({ ...d.data(), uid: d.id } as FriendRequest)));
+    const unsubReceived = safeSubscribe(userDocRef.collection('receivedRequests'), (snap: any) => {
+      setReceivedRequests(snap.docs.map((d: any) => ({ ...d.data(), uid: d.id } as FriendRequest)));
     });
 
-    const unsubFiles = userDocRef.collection('files').orderBy('createdAt', 'desc').onSnapshot(snap => {
-      setFiles(snap.docs.map(d => d.data() as UserFile));
+    const unsubFiles = safeSubscribe(userDocRef.collection('files').orderBy('createdAt', 'desc'), (snap: any) => {
+      setFiles(snap.docs.map((d: any) => d.data() as UserFile));
     });
 
     return () => { unsubFriends(); unsubSent(); unsubReceived(); unsubFiles(); };

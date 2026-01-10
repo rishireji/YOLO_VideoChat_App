@@ -3,6 +3,11 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     
+    // Allow anonymous matchmaking signaling
+    match /matchmaking/{document=**} {
+      allow read, write: if true;
+    }
+
     match /Users/{userId} {
       // 1. Profile Visibility: Public profiles are restricted. 
       // Full read only if owner OR reciprocal friend.
